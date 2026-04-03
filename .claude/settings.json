@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3543229299/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3622163276/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3618427553/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/shared/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/shared/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/server/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/server/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/client/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/client/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3622163276/mods/rvupdate2/42/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3622163276/mods/rvupdate2/42/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3622163276/mods/rvupdate2/42/media/lua/shared/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3622163276/mods/rvupdate2/42/media/lua/shared/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/media/lua/shared/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/media/lua/shared/**)"
+    ]
+  }
+}
