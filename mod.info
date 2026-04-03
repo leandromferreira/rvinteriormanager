@@ -1,6 +1,6 @@
 version=1.0
 name=[B42] RV Interior Manager
-id=RVInteriorManager42
+id=rvinteriormanager
 description=Admin panel para gerenciar as atribuicoes do mod RV Interior. Mostra quantos RVs de cada tipo estao disponiveis e ocupados, lista os veiculos com suas localizacoes no mapa e no interior.
 require=PROJECTRVInterior42
 poster=poster.png
