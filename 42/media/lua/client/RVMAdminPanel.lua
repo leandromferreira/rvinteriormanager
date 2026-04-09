@@ -1,425 +1,542 @@
--- RV Interior Manager - Client Side / Admin Panel UI
+-- RV Interior Manager — Admin Panel (Client / SP)
 
-if not isClient() then return end
+if isServer() then return end
 
 require("RVMShared")
 
--- ============================================================
--- RVManagerPanel
--- ============================================================
 RVManagerPanel = ISPanel:derive("RVManagerPanel")
 
-local PAD       = 10
-local ROW_H     = 20
-local TITLE_H   = 28
-local BOTTOM_H  = 45   -- reserved height for action buttons at the bottom
+-- ============================================================
+-- Layout constants
+-- ============================================================
+local PAD      = 8
+local ROW_H    = 18
+local HDR_H    = 20
+local TITLE_H  = 28
+local FILTER_H = 24     -- height of the filter text-entry row
+local BTN_H    = 26
+local BTN_W    = 155
 
--- Summary table columns: Tipo (key) | Tamanho | Total | Ocupados | Disponiveis
-local SCOL = { 120, 55, 50, 70, 70 }
+-- Summary section: fixed height cap so it never pushes the assignment table off screen.
+local SUMMARY_MAX_H = 120   -- visible rows ≈ 6; scrollable if more types exist
 
--- Assignment table columns: Vehicle ID | Tipo (key) | Tamanho | Local Carro | Local RV | Linked em
-local ACOL = { 75, 115, 50, 115, 115, 125 }
+-- Summary columns: Type | Total | Occupied | Free
+local SCOL = { 160, 55, 70, 55 }
 
-function RVManagerPanel:new(x, y, w, h)
-    local o = ISPanel.new(self, x, y, w, h)
-    o.backgroundColor    = { r=0.08, g=0.08, b=0.10, a=0.96 }
-    o.borderColor        = { r=0.40, g=0.40, b=0.45, a=1.00 }
-    o.moveWithMouse      = true
-    o.loading            = false
-    o.data               = nil
-    o.scrollY            = 0
-    o.contentH           = 0
-    o.selectedIndex      = nil   -- index into data.assignments
-    o.assignRowsScreenTop = nil  -- screen Y of first assignment data row (set in render)
-    o.assignRowCount      = 0
+-- Assignment columns
+local ACOL = { 85, 145, 105, 105, 105, 90, 80, 80 }
+local AHDR = {
+    "Vehicle ID", "Name", "Veh. Pos",
+    "RV Type", "RV Pos", "Linked",
+    "Last In", "Last Out",
+}
+
+local PANEL_W = PAD
+for _, w in ipairs(ACOL) do PANEL_W = PANEL_W + w end
+PANEL_W = PANEL_W + PAD   -- 813
+
+local PANEL_H = 640
+
+-- ============================================================
+-- Constructor
+-- ============================================================
+function RVManagerPanel:new(x, y)
+    local o = ISPanel.new(self, x, y, PANEL_W, PANEL_H)
+    o.backgroundColor = { r = 0.08, g = 0.08, b = 0.10, a = 0.96 }
+    o.borderColor     = { r = 0.35, g = 0.35, b = 0.42, a = 1.00 }
+    o.moveWithMouse   = true
+
+    o.loading        = false
+    o.data           = nil      -- last responseData from server
+    o.scrollY        = 0
+    o.summaryScrollY = 0
+    o.selectedRvId   = nil      -- rvVehicleUniqueId of selected row (stable across filter changes)
+
+    -- Set by render so onMouseDown / onMouseWheel can hit-test regions
+    o.summaryRegionY = 0
+    o.summaryRegionH = 0
+    o.assignTableY   = 0
+    o.assignContentH = 0
+    o.assignRowCount = 0
     return o
 end
 
 function RVManagerPanel:initialise()
     ISPanel.initialise(self)
 
-    -- Top-right controls
-    local rw = 70
-    local rbtn = ISButton:new(self.width - rw - 28, 5, rw, 18, "Refresh", self, RVManagerPanel.requestData)
-    rbtn:initialise()
-    rbtn.backgroundColor = { r=0.2, g=0.35, b=0.2, a=1 }
-    self:addChild(rbtn)
+    -- Close button (top-right)
+    local close = ISButton:new(self.width - 22, 4, 18, 20, "X", self, RVManagerPanel.onClose)
+    close:initialise()
+    close.backgroundColor = { r = 0.50, g = 0.10, b = 0.10, a = 1 }
+    self:addChild(close)
 
-    local cbtn = ISButton:new(self.width - 22, 5, 16, 18, "X", self, RVManagerPanel.onClose)
-    cbtn:initialise()
-    cbtn.backgroundColor = { r=0.4, g=0.1, b=0.1, a=1 }
-    self:addChild(cbtn)
+    -- Refresh button
+    local refresh = ISButton:new(self.width - 96, 4, 70, 20, "Refresh", self, RVManagerPanel.requestData)
+    refresh:initialise()
+    refresh.backgroundColor = { r = 0.15, g = 0.28, b = 0.15, a = 1 }
+    self:addChild(refresh)
 
-    -- Bottom action buttons (disabled until a row is selected)
-    local bw  = 160
-    local bh  = 25
-    local by  = self.height - BOTTOM_H + 10
+    -- Bottom action buttons
+    local by = self.height - PAD - BTN_H
 
-    self.btnTpCar = ISButton:new(PAD, by, bw, bh, "Ir para o Carro", self, RVManagerPanel.teleportToCar)
-    self.btnTpCar:initialise()
-    self.btnTpCar.backgroundColor        = { r=0.25, g=0.20, b=0.05, a=1 }
-    self.btnTpCar.backgroundColor2       = { r=0.35, g=0.28, b=0.08, a=1 }
-    self.btnTpCar.textColor              = { r=0.60, g=0.60, b=0.60, a=1 }
-    self:addChild(self.btnTpCar)
+    self.btnTpVeh = ISButton:new(PAD, by, BTN_W, BTN_H,
+        "Teleport to Vehicle", self, RVManagerPanel.teleportToVehicle)
+    self.btnTpVeh:initialise()
+    self:addChild(self.btnTpVeh)
 
-    self.btnTpRV = ISButton:new(PAD + bw + 10, by, bw, bh, "Ir para o Interior RV", self, RVManagerPanel.teleportToRV)
-    self.btnTpRV:initialise()
-    self.btnTpRV.backgroundColor        = { r=0.05, g=0.20, b=0.25, a=1 }
-    self.btnTpRV.backgroundColor2       = { r=0.08, g=0.28, b=0.35, a=1 }
-    self.btnTpRV.textColor              = { r=0.60, g=0.60, b=0.60, a=1 }
-    self:addChild(self.btnTpRV)
+    self.btnTpRoom = ISButton:new(PAD + BTN_W + PAD, by, BTN_W, BTN_H,
+        "Teleport to Room", self, RVManagerPanel.teleportToRoom)
+    self.btnTpRoom:initialise()
+    self:addChild(self.btnTpRoom)
+
+    self.btnDissoc = ISButton:new(PAD + (BTN_W + PAD) * 2, by, BTN_W, BTN_H,
+        "Dissociate", self, RVManagerPanel.dissociate)
+    self.btnDissoc:initialise()
+    self.btnDissoc.backgroundColor = { r = 0.40, g = 0.10, b = 0.10, a = 1 }
+    self:addChild(self.btnDissoc)
+
+    -- Filter text entry (below title row)
+    local filterLabelW = 52
+    local filterY      = PAD + TITLE_H + 2
+    self.filterBox = ISTextEntryBox:new("",
+        PAD + filterLabelW, filterY,
+        self.width - PAD * 2 - filterLabelW, FILTER_H)
+    -- addChild first so the Java parent exists when initialise creates javaObject.
+    self:addChild(self.filterBox)
+    self.filterBox:initialise()
+    self.filterBox:setEditable(true)
+
+    self:updateButtons()
+    self:requestData()
 end
 
-function RVManagerPanel:onClose()
-    self:removeSelf()
-    RVManagerPanel.instance = nil
-end
-
+-- ============================================================
+-- Data
+-- ============================================================
 function RVManagerPanel:requestData()
-    self.loading       = true
-    self.data          = nil
-    self.scrollY       = 0
-    self.selectedIndex = nil
+    self.loading      = true
+    self.data         = nil
+    self.selectedRvId = nil
     self:updateButtons()
     sendClientCommand(RVM.MODULE, "requestData", {})
 end
 
 function RVManagerPanel:receiveData(data)
-    self.loading       = false
-    self.data          = data
-    self.selectedIndex = nil
+    self.loading        = false
+    self.data           = data
+    self.selectedRvId   = nil
+    self.scrollY        = 0
+    self.summaryScrollY = 0
     self:updateButtons()
 end
 
--- Enable/disable teleport buttons based on selection
+-- ============================================================
+-- Buttons
+-- ============================================================
 function RVManagerPanel:updateButtons()
-    local sel = self.selectedIndex
-    local a   = sel and self.data and self.data.assignments and self.data.assignments[sel]
+    local a = self:selectedAssignment()
 
-    local hasCar = a and a.carX ~= nil
-    local hasRV  = a and a.roomX ~= nil
-
-    self.btnTpCar.textColor = hasCar
-        and { r=1.00, g=0.85, b=0.20, a=1 }
-        or  { r=0.45, g=0.45, b=0.45, a=1 }
-
-    self.btnTpRV.textColor = hasRV
-        and { r=0.20, g=0.85, b=1.00, a=1 }
-        or  { r=0.45, g=0.45, b=0.45, a=1 }
-end
-
--- ---- Teleport ------------------------------------------------------
-
-local function doTeleport(x, y, z)
-    if not x then return end
-    local player = getSpecificPlayer(0)
-    if not player then return end
-
-    -- Exit vehicle if seated
-    local vehicle = player:getVehicle()
-    if vehicle then vehicle:exit(player) end
-
-    player:setX(x)
-    player:setY(y)
-    player:setZ(z or 0)
-    player:setLastX(x)
-    player:setLastY(y)
-    player:setLastZ(z or 0)
-end
-
-function RVManagerPanel:teleportToCar()
-    local a = self:getSelected()
-    if not a or not a.carX then return end
-    doTeleport(a.carX, a.carY, a.carZ)
-end
-
-function RVManagerPanel:teleportToRV()
-    local a = self:getSelected()
-    if not a or not a.roomX then return end
-    doTeleport(a.roomX, a.roomY, a.roomZ)
-end
-
-function RVManagerPanel:getSelected()
-    if not self.selectedIndex or not self.data then return nil end
-    return (self.data.assignments or {})[self.selectedIndex]
-end
-
--- ---- Mouse ---------------------------------------------------------
-
-function RVManagerPanel:onMouseWheel(del)
-    self.scrollY = self.scrollY - del * 20
-    if self.scrollY < 0 then self.scrollY = 0 end
-    local maxScroll = math.max(0, self.contentH - (self.height - TITLE_H - PAD - BOTTOM_H))
-    if self.scrollY > maxScroll then self.scrollY = maxScroll end
-    return true
-end
-
-function RVManagerPanel:onMouseDown(x, y)
-    -- Check if click landed on an assignment row
-    local top   = self.assignRowsScreenTop
-    local count = self.assignRowCount
-    if not top or count == 0 then return end
-
-    if y >= top and y < top + count * ROW_H then
-        local idx = math.floor((y - top) / ROW_H) + 1
-        if idx >= 1 and idx <= count then
-            self.selectedIndex = (self.selectedIndex == idx) and nil or idx
-            self:updateButtons()
-            return
-        end
+    local function apply(btn, enabled)
+        btn.enable    = enabled
+        btn.textColor = enabled
+            and { r = 1.0, g = 1.0, b = 1.0, a = 1 }
+            or  { r = 0.4, g = 0.4, b = 0.4, a = 1 }
     end
-    ISPanel.onMouseDown(self, x, y)
+
+    apply(self.btnTpVeh,  a ~= nil and a.lastPos ~= nil)
+    apply(self.btnTpRoom, a ~= nil and a.room    ~= nil)
+    apply(self.btnDissoc, a ~= nil)
 end
 
--- ---- Helpers -------------------------------------------------------
-
-local function fmtCoord(x, y, z)
-    if not x then return "?" end
-    return string.format("%d,%d,%d", math.floor(x), math.floor(y), math.floor(z or 0))
+function RVManagerPanel:onClose()
+    self:removeFromUIManager()
+    RVManagerPanel.instance = nil
 end
 
--- ---- Render --------------------------------------------------------
-
-local CLIP_BOTTOM_MARGIN = BOTTOM_H + PAD
-
+-- ============================================================
+-- Rendering
+-- ============================================================
 function RVManagerPanel:render()
     ISPanel.render(self)
 
-    local W        = self.width
-    local clipYTop = TITLE_H
-    local clipYBot = self.height - CLIP_BOTTOM_MARGIN
+    local x = PAD
+    local y = PAD
 
-    -- Title bar
-    self:drawRect(0, 0, W, TITLE_H, 1, 0.05, 0.05, 0.07)
-    self:drawText("RV Interior Manager", PAD, 6, 0.95, 0.75, 0.20, 1, UIFont.Medium)
+    -- Title
+    self:drawText("RV Interior Manager", x, y, 1, 1, 1, 1, UIFont.Medium)
+    y = y + TITLE_H
 
-    -- Bottom bar background
-    self:drawRect(0, self.height - BOTTOM_H, W, BOTTOM_H, 1, 0.05, 0.05, 0.07)
-    self:drawRect(0, self.height - BOTTOM_H, W, 1, 1, 0.25, 0.25, 0.30)
-
-    -- Selection label in bottom bar
-    local selLabel = "Nenhum registro selecionado"
-    local a = self:getSelected()
-    if a then
-        selLabel = string.format("Selecionado: Vehicle ID %s  [%s %s]",
-            a.vehicleId or "?",
-            a.roomType  or "?",
-            RVM.TypeSizes[a.roomType] or "?"
-        )
-    end
-    self:drawText(selLabel, PAD + 340, self.height - BOTTOM_H + 14, 0.65, 0.65, 0.65, 1, UIFont.Small)
-
-    local cy = clipYTop + PAD - self.scrollY
+    -- Filter label (box is a child widget placed at the same y)
+    self:drawText("Filter:", x, y + 5, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    y = y + FILTER_H + PAD
 
     if self.loading then
-        self:drawText("Solicitando dados ao servidor...", PAD, clipYTop + PAD, 0.7, 0.7, 0.7, 1, UIFont.Small)
+        self:drawText("Loading...", x, y + 20, 0.7, 0.7, 0.7, 1, UIFont.Small)
         return
     end
 
     if not self.data then
-        self:drawText("Nenhum dado. Clique em Refresh.", PAD, clipYTop + PAD, 0.6, 0.6, 0.6, 1, UIFont.Small)
+        self:drawText("No data — press Refresh.", x, y + 20, 0.8, 0.7, 0.3, 1, UIFont.Small)
         return
     end
 
-    -- ----------------------------------------------------------------
-    -- SECTION 1: Summary
-    -- ----------------------------------------------------------------
-    cy = self:renderSectionHeader("Resumo por Tipo de RV", PAD, cy, W, clipYTop, clipYBot)
-    cy = self:renderSummaryHeader(PAD, cy, clipYTop, clipYBot)
+    -- Summary table
+    y = self:renderSummary(x, y)
 
-    local summary  = self.data.summary or {}
-    local typeList = {}
-    for k in pairs(summary) do table.insert(typeList, k) end
-    table.sort(typeList)
+    -- Divider
+    y = y + PAD
+    self:drawRect(x, y, self.width - PAD * 2, 1, 0.9, 0.3, 0.3, 0.35)
+    y = y + PAD
 
-    for _, typeKey in ipairs(typeList) do
-        local info      = summary[typeKey]
-        local total     = info.total or RVM.ROOMS_PER_TYPE
-        local occupied  = info.occupied or 0
-        local available = total - occupied
-        local sizeLabel = RVM.TypeSizes[typeKey] or "?"
+    -- Assignment table (fills remaining space above buttons)
+    self:renderAssignments(x, y)
+end
 
-        if cy + ROW_H > clipYTop and cy < clipYBot then
-            local r, g
-            if occupied == 0 then
-                r, g = 0.3, 0.9
-            elseif occupied >= total then
-                r, g = 0.9, 0.2
-            elseif occupied / total > 0.8 then
-                r, g = 0.9, 0.55
+function RVManagerPanel:renderSummary(x, y)
+    -- Column headers (outside the clipped region)
+    local cx   = x
+    local hdrs = { "Type", "Total", "Occupied", "Free" }
+    for i, h in ipairs(hdrs) do
+        self:drawText(h, cx + 2, y, 0.75, 0.75, 0.45, 1, UIFont.Small)
+        cx = cx + SCOL[i]
+    end
+    y = y + HDR_H
+
+    if not self.data.summary then return y end
+
+    -- Sort types for stable order
+    local types = {}
+    for k in pairs(self.data.summary) do table.insert(types, k) end
+    table.sort(types)
+
+    local totalH  = #types * ROW_H
+    local clampH  = math.min(totalH, SUMMARY_MAX_H)
+
+    -- Clamp scroll
+    local maxScroll = math.max(0, totalH - clampH)
+    self.summaryScrollY = math.max(0, math.min(maxScroll, self.summaryScrollY))
+
+    -- Track region for mouse-wheel hit-test
+    self.summaryRegionY = y
+    self.summaryRegionH = clampH
+
+    self:setStencilRect(0, y, self.width, clampH)
+
+    local rowY = y - self.summaryScrollY
+    local clr = {
+        { 0.90, 0.90, 0.90 },
+        { 0.65, 0.65, 0.90 },
+        { 0.90, 0.50, 0.50 },
+        { 0.50, 0.90, 0.50 },
+    }
+
+    for idx, typeKey in ipairs(types) do
+        if rowY + ROW_H > y and rowY < y + clampH then
+            -- Alternating row background
+            local bg = (idx % 2 == 0)
+                and { 1, 0.10, 0.10, 0.13 }
+                or  { 1, 0.13, 0.13, 0.16 }
+            self:drawRect(x, rowY, self.width - PAD * 2, ROW_H,
+                bg[1], bg[2], bg[3], bg[4])
+
+            local s   = self.data.summary[typeKey]
+            local row = { typeKey, tostring(s.totalRooms), tostring(s.occupied), tostring(s.free) }
+            cx = x
+            for i, val in ipairs(row) do
+                local c = clr[i]
+                self:drawText(val, cx + 2, rowY + 1, c[1], c[2], c[3], 1, UIFont.Small)
+                cx = cx + SCOL[i]
+            end
+        end
+        rowY = rowY + ROW_H
+    end
+
+    self:clearStencilRect()
+
+    -- Scrollbar
+    if totalH > clampH then
+        local barH  = math.max(12, clampH * clampH / totalH)
+        local ratio = maxScroll > 0 and self.summaryScrollY / maxScroll or 0
+        local barY  = y + ratio * (clampH - barH)
+        self:drawRect(self.width - PAD - 4, barY, 4, barH, 0.7, 0.5, 0.5, 0.6)
+    end
+
+    return y + clampH
+end
+
+function RVManagerPanel:renderAssignments(x, y)
+    local assignments = self:getFilteredAssignments()
+    if not assignments then return end
+
+    -- Column headers
+    local cx = x
+    for i, hdr in ipairs(AHDR) do
+        self:drawRect(cx, y, ACOL[i] - 1, HDR_H, 1, 0.14, 0.14, 0.18)
+        self:drawText(hdr, cx + 2, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+        cx = cx + ACOL[i]
+    end
+    y = y + HDR_H
+
+    -- Scrollable content area (stops above the action buttons)
+    local bottomReserved = PAD + BTN_H + PAD
+    local contentH       = self.height - y - bottomReserved
+    self.assignTableY    = y
+    self.assignContentH  = contentH
+    self.assignRowCount  = #assignments
+
+    self:setStencilRect(0, y, self.width, contentH)
+
+    local rowY = y - self.scrollY
+
+    local function fmt(v)
+        return v ~= nil and tostring(v) or "-"
+    end
+    local function fmtPos(pos)
+        if not pos then return "-" end
+        return string.format("%.0f, %.0f", pos.x or 0, pos.y or 0)
+    end
+
+    for idx, a in ipairs(assignments) do
+        if rowY + ROW_H > y and rowY < y + contentH then
+            -- Row background — highlight by rvId so it survives filter changes.
+            local selected = tostring(a.rvVehicleUniqueId) == self.selectedRvId
+            local bg
+            if selected then
+                bg = { a=1, r=0.18, g=0.30, b=0.42 }
+            elseif idx % 2 == 0 then
+                bg = { a=1, r=0.10, g=0.10, b=0.13 }
             else
-                r, g = 0.3, 0.85
+                bg = { a=1, r=0.13, g=0.13, b=0.16 }
             end
+            self:drawRect(x, rowY, self.width - PAD * 2, ROW_H,
+                bg.a, bg.r, bg.g, bg.b)
 
-            local hx = PAD
-            self:drawText(typeKey,             hx, cy, 0.95, 0.95, 0.95, 1, UIFont.Small) hx = hx + SCOL[1]
-            self:drawText(sizeLabel,           hx, cy, 0.65, 0.85, 1.00, 1, UIFont.Small) hx = hx + SCOL[2]
-            self:drawText(tostring(total),     hx, cy, 0.75, 0.75, 0.75, 1, UIFont.Small) hx = hx + SCOL[3]
-            self:drawText(tostring(occupied),  hx, cy, r,    g,    0.2,  1, UIFont.Small) hx = hx + SCOL[4]
-            self:drawText(tostring(available), hx, cy, g,    r,    0.2,  1, UIFont.Small)
+            local cols = {
+                fmt(a.rvVehicleUniqueId),
+                fmt(a.vehicleName),
+                fmtPos(a.lastPos),
+                fmt(a.typeKey),
+                fmtPos(a.room),
+                fmt(a.dateLinked),
+                fmt(a.lastEnterDate),
+                fmt(a.lastOutDate),
+            }
+
+            cx = x
+            for i, val in ipairs(cols) do
+                self:drawText(val, cx + 2, rowY + 2, 0.85, 0.85, 0.85, 1, UIFont.Small)
+                cx = cx + ACOL[i]
+            end
         end
-        cy = cy + ROW_H
+        rowY = rowY + ROW_H
     end
 
-    cy = cy + PAD
+    self:clearStencilRect()
 
-    -- ----------------------------------------------------------------
-    -- SECTION 2: Active Assignments
-    -- ----------------------------------------------------------------
-    cy = self:renderSectionHeader("Atribuicoes Ativas", PAD, cy, W, clipYTop, clipYBot)
+    -- Scrollbar
+    local totalH = #assignments * ROW_H
+    if totalH > contentH then
+        local barH  = math.max(20, contentH * contentH / totalH)
+        local ratio = (totalH - contentH > 0)
+            and self.scrollY / (totalH - contentH) or 0
+        local barY  = y + ratio * (contentH - barH)
+        self:drawRect(self.width - PAD - 4, barY, 4, barH, 0.7, 0.5, 0.5, 0.6)
+    end
+end
 
-    local assignments = self.data.assignments or {}
-    self.assignRowCount = #assignments
+-- ============================================================
+-- Input
+-- ============================================================
+function RVManagerPanel:onMouseDown(x, y)
+    ISPanel.onMouseDown(self, x, y)
+    if not self.data then return end
 
-    if #assignments == 0 then
-        self.assignRowsScreenTop = nil
-        if cy > clipYTop and cy < clipYBot then
-            self:drawText("Nenhum veiculo vinculado a um RV no momento.", PAD, cy, 0.55, 0.55, 0.55, 1, UIFont.Small)
-        end
-        cy = cy + ROW_H
+    -- Hit-test only within the content area
+    if y < self.assignTableY or y > self.assignTableY + self.assignContentH then return end
+
+    local filtered = self:getFilteredAssignments()
+    local relY     = y - self.assignTableY + self.scrollY
+    local idx      = math.floor(relY / ROW_H) + 1
+
+    if idx >= 1 and idx <= #filtered then
+        local rvId = tostring(filtered[idx].rvVehicleUniqueId)
+        self.selectedRvId = (self.selectedRvId == rvId) and nil or rvId
+        self:updateButtons()
+    end
+end
+
+function RVManagerPanel:onMouseWheel(del)
+    if not self.data then return false end
+
+    -- Route wheel to whichever section the cursor is over.
+    local my = self:getMouseY()
+    local step = del * ROW_H * 3
+
+    if my >= self.summaryRegionY and my < self.summaryRegionY + self.summaryRegionH then
+        -- Summary section
+        local types = self.data.summary and self.data.summary or {}
+        local count = 0
+        for _ in pairs(types) do count = count + 1 end
+        local totalH    = count * ROW_H
+        local maxScroll = math.max(0, totalH - self.summaryRegionH)
+        self.summaryScrollY = math.max(0, math.min(maxScroll, self.summaryScrollY - step))
     else
-        cy = self:renderAssignmentHeader(PAD, cy, clipYTop, clipYBot)
+        -- Assignment section
+        local filtered  = self:getFilteredAssignments()
+        local totalH    = #filtered * ROW_H
+        local maxScroll = math.max(0, totalH - self.assignContentH)
+        self.scrollY    = math.max(0, math.min(maxScroll, self.scrollY - step))
+    end
 
-        -- Record where rows begin (screen Y of first data row)
-        self.assignRowsScreenTop = cy
+    return true
+end
 
-        for i, a in ipairs(assignments) do
-            local selected = (self.selectedIndex == i)
+-- ============================================================
+-- Filter helpers
+-- ============================================================
+function RVManagerPanel:getFilterText()
+    if not self.filterBox then return "" end
+    -- ISTextEntryBox exposes getText() directly in B42.
+    local text = self.filterBox:getText()
+    if type(text) ~= "string" then return "" end
+    return text
+end
 
-            if cy + ROW_H > clipYTop and cy < clipYBot then
-                if selected then
-                    self:drawRect(PAD, cy, W - PAD*2, ROW_H, 1, 0.20, 0.35, 0.45)
-                elseif i % 2 == 0 then
-                    self:drawRect(PAD, cy, W - PAD*2, ROW_H, 1, 0.12, 0.12, 0.14)
-                end
+function RVManagerPanel:getFilteredAssignments()
+    if not self.data or not self.data.assignments then return {} end
+    local raw = self.getFilterText and self:getFilterText() or ""
+    local filter = raw:lower():match("^%s*(.-)%s*$")
+    if filter == "" then return self.data.assignments end
 
-                local typeKey   = a.roomType or "?"
-                local sizeLabel = RVM.TypeSizes[typeKey] or "?"
-                local carLoc    = fmtCoord(a.carX, a.carY, a.carZ)
-                local rvLoc     = fmtCoord(a.roomX, a.roomY, a.roomZ)
-                local linkDate  = a.linkDate or "?"
-
-                local cr, cg, cb = selected and 1 or 0.80, selected and 1 or 0.90, selected and 1 or 1.00
-
-                local hx = PAD
-                self:drawText(a.vehicleId or "?", hx, cy, cr,   cg,   cb,   1, UIFont.Small) hx = hx + ACOL[1]
-                self:drawText(typeKey,             hx, cy, 0.95, 0.95, 0.95, 1, UIFont.Small) hx = hx + ACOL[2]
-                self:drawText(sizeLabel,           hx, cy, 0.65, 0.85, 1.00, 1, UIFont.Small) hx = hx + ACOL[3]
-                self:drawText(carLoc,              hx, cy, 0.95, 0.85, 0.50, 1, UIFont.Small) hx = hx + ACOL[4]
-                self:drawText(rvLoc,               hx, cy, 0.50, 0.90, 0.85, 1, UIFont.Small) hx = hx + ACOL[5]
-                self:drawText(linkDate,            hx, cy, 0.75, 0.75, 0.75, 1, UIFont.Small)
-            end
-            cy = cy + ROW_H
+    local result = {}
+    for _, a in ipairs(self.data.assignments) do
+        local function has(v)
+            return v and tostring(v):lower():find(filter, 1, true)
+        end
+        if has(a.rvVehicleUniqueId) or has(a.vehicleName) or has(a.typeKey) then
+            table.insert(result, a)
         end
     end
-
-    self.contentH = (cy + self.scrollY) - clipYTop
-end
-
--- ---- Sub-render helpers --------------------------------------------
-
-function RVManagerPanel:renderSectionHeader(label, x, cy, W, yTop, yBot)
-    if cy + ROW_H > yTop and cy < yBot + 40 then
-        self:drawRect(x, cy, W - x*2, ROW_H, 1, 0.15, 0.15, 0.20)
-        self:drawText(label, x + 4, cy + 1, 0.90, 0.70, 0.20, 1, UIFont.Small)
-    end
-    return cy + ROW_H + 2
-end
-
-function RVManagerPanel:renderSummaryHeader(x, cy, yTop, yBot)
-    if cy + ROW_H > yTop and cy < yBot then
-        self:drawRect(x, cy, self.width - x*2, 1, 1, 0.35, 0.35, 0.35)
-        local hx = x
-        self:drawText("Tipo",        hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + SCOL[1]
-        self:drawText("Tamanho",     hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + SCOL[2]
-        self:drawText("Total",       hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + SCOL[3]
-        self:drawText("Ocupados",    hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + SCOL[4]
-        self:drawText("Disponiveis", hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small)
-    end
-    return cy + ROW_H + 2
-end
-
-function RVManagerPanel:renderAssignmentHeader(x, cy, yTop, yBot)
-    if cy + ROW_H > yTop and cy < yBot then
-        self:drawRect(x, cy, self.width - x*2, 1, 1, 0.35, 0.35, 0.35)
-        local hx = x
-        self:drawText("Vehicle ID",     hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + ACOL[1]
-        self:drawText("Tipo",           hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + ACOL[2]
-        self:drawText("Tamanho",        hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + ACOL[3]
-        self:drawText("Local do Carro", hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + ACOL[4]
-        self:drawText("Local do RV",    hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small) hx = hx + ACOL[5]
-        self:drawText("Linked em",      hx, cy + 2, 0.65, 0.65, 0.65, 1, UIFont.Small)
-    end
-    return cy + ROW_H + 2
+    return result
 end
 
 -- ============================================================
--- Server response handler
+-- Actions
 -- ============================================================
-local function onServerCommand(module, command, data)
+function RVManagerPanel:selectedAssignment()
+    if not self.selectedRvId or not self.data then return nil end
+    for _, a in ipairs(self.data.assignments) do
+        if tostring(a.rvVehicleUniqueId) == self.selectedRvId then
+            return a
+        end
+    end
+    return nil
+end
+
+function RVManagerPanel:teleportToVehicle()
+    local a = self:selectedAssignment()
+    if not a or not a.lastPos then return end
+    local p = getSpecificPlayer(0)
+    p:setX(a.lastPos.x);      p:setLastX(a.lastPos.x)
+    p:setY(a.lastPos.y);      p:setLastY(a.lastPos.y)
+    p:setZ(a.lastPos.z or 0); p:setLastZ(a.lastPos.z or 0)
+end
+
+function RVManagerPanel:teleportToRoom()
+    local a = self:selectedAssignment()
+    if not a or not a.room then return end
+    local p = getSpecificPlayer(0)
+    p:setX(a.room.x);      p:setLastX(a.room.x)
+    p:setY(a.room.y);      p:setLastY(a.room.y)
+    p:setZ(a.room.z or 0); p:setLastZ(a.room.z or 0)
+end
+
+function RVManagerPanel:dissociate()
+    local a = self:selectedAssignment()
+    if not a then return end
+    sendClientCommand(RVM.MODULE, "dissociate",
+        { rvVehicleUniqueId = a.rvVehicleUniqueId })
+    -- Optimistic remove from full list; server will confirm and we refresh.
+    local rvId = tostring(a.rvVehicleUniqueId)
+    for i, entry in ipairs(self.data.assignments) do
+        if tostring(entry.rvVehicleUniqueId) == rvId then
+            table.remove(self.data.assignments, i)
+            break
+        end
+    end
+    self.selectedRvId = nil
+    self:updateButtons()
+end
+
+-- ============================================================
+-- Server response listener
+-- ============================================================
+local function onServerCommand(module, command, args)
     if module ~= RVM.MODULE then return end
-    if command == "responseData" and RVManagerPanel.instance then
-        RVManagerPanel.instance:receiveData(data)
+    local panel = RVManagerPanel.instance
+    if not panel then return end
+
+    if command == "responseData" then
+        panel:receiveData(args)
+    elseif command == "dissociateResult" or command == "associateResult" then
+        if args and args.ok then
+            panel:requestData()
+        end
     end
 end
 
 Events.OnServerCommand.Add(onServerCommand)
 
 -- ============================================================
--- Panel open / close
+-- Open / toggle
 -- ============================================================
-local function isAdminOrMod(player)
-    return player:isAccessLevel("admin") or player:isAccessLevel("moderator")
-end
-
-local function openRVManager()
-    local player = getSpecificPlayer(0)
-    if not player or not isAdminOrMod(player) then return end
-
+function RVManagerPanel.open()
     if RVManagerPanel.instance then
-        RVManagerPanel.instance:onClose()
+        RVManagerPanel.instance:removeFromUIManager()
+        RVManagerPanel.instance = nil
         return
     end
 
-    local W, H    = 650, 560
-    local screenW = getCore():getScreenWidth()
-    local screenH = getCore():getScreenHeight()
-    local px      = math.floor((screenW - W) / 2)
-    local py      = math.floor((screenH - H) / 2)
+    local sw = getCore():getScreenWidth()
+    local sh = getCore():getScreenHeight()
+    local px = math.floor((sw - PANEL_W) / 2)
+    local py = math.floor((sh - PANEL_H) / 2)
 
-    local panel = RVManagerPanel:new(px, py, W, H)
+    local panel = RVManagerPanel:new(px, py)
     panel:initialise()
     panel:addToUIManager()
     RVManagerPanel.instance = panel
-
-    panel:requestData()
 end
 
 -- ============================================================
--- Context menu hook (right-click in world) - Admin/Mod only
+-- Admin panel integration
 -- ============================================================
-local function onFillWorldObjectContextMenu(playerIndex, context, worldObjects)
-    local player = getSpecificPlayer(playerIndex)
-    if not player or not isAdminOrMod(player) then return end
-
-    context:addOption("RV Manager", nil, openRVManager)
-end
-
-Events.OnFillWorldObjectContextMenu.Add(onFillWorldObjectContextMenu)
-
+-- Adds an "RV Interior Manager" button to the in-game admin
+-- panel (ISAdminPanelUI), which is only visible to admins/mods.
+-- The hook runs once after the world loads so the class is
+-- guaranteed to exist.
 -- ============================================================
--- Admin panel button hook (ESC menu > Admin)
--- ============================================================
-local function tryAddToAdminPanel()
-    if not ISAdminPanel then return end
+local function hookAdminPanel()
+    if not ISAdminPanelUI then return end
 
-    local origCreate = ISAdminPanel.create
-    ISAdminPanel.create = function(self, ...)
-        origCreate(self, ...)
-        local btn = ISButton:new(10, self.height - 30, 120, 20, "RV Manager", self, function() openRVManager() end)
+    local original = ISAdminPanelUI.createChildren
+    function ISAdminPanelUI.createChildren(self)
+        original(self)
+
+        local btnW = 220
+        local btnH = 25
+        -- Place centered, just above the FECHAR button (~35px from bottom).
+        local bx = math.floor((self.width - btnW) / 2)
+        local by = self.height - btnH - 35
+
+        local btn = ISButton:new(bx, by, btnW, btnH,
+            "RV Interior Manager", self, function()
+                RVManagerPanel.open()
+            end)
         btn:initialise()
+        btn.backgroundColor = { r = 0.10, g = 0.20, b = 0.30, a = 1 }
         self:addChild(btn)
     end
 end
 
-Events.OnGameStart.Add(tryAddToAdminPanel)
+Events.OnGameStart.Add(hookAdminPanel)
