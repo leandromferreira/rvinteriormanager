@@ -11,7 +11,8 @@ require("RVMShared")
 -- ============================================================
 local function isAdmin(player)
     if not isClient() then return true end   -- SP: always allowed
-    return player:isAccessLevel("admin") or player:isAccessLevel("moderator")
+    local level = string.lower(player:getAccessLevel() or "")
+    return level == "admin" or level == "moderator"
 end
 
 -- Returns the typeKey for a vehicle, or nil if it is not a
@@ -32,15 +33,18 @@ local function getRVTypeKey(vehicle)
 end
 
 -- Returns the rvVehicleUniqueId assigned to this vehicle, or nil.
+-- Checks both the string key ("12345") and numeric key (12345) because the base
+-- mod may store assignments under a numeric key while we normalise to strings.
 local function getAssignedRvId(vehicle, typeKey)
     local uid = vehicle:getModData().projectRV_uniqueId
     if not uid then return nil end
     local rvId    = tostring(uid)
+    local numId   = tonumber(uid)
     local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
     local dataKey = (typeKey == "normal") and "AssignedRooms"
                                           or  ("AssignedRooms" .. typeKey)
     local assigned = base[dataKey]
-    if assigned and assigned[rvId] then
+    if assigned and (assigned[rvId] or (numId and assigned[numId])) then
         return rvId
     end
     return nil
@@ -87,27 +91,32 @@ local function getFreeRooms(typeKey)
 end
 
 -- Sends the associate command to the server.
-local function sendAssociate(rvVehicleUniqueId, typeKey, vehicle)
-    sendClientCommand(RVM.MODULE, "associate", {
+-- selectedRoom is optional { x, y, z }; when provided the server uses that
+-- specific room instead of picking a random free one.
+local function sendAssociate(rvVehicleUniqueId, typeKey, vehicle, selectedRoom)
+    local script = vehicle:getScript()
+    local data = {
         rvVehicleUniqueId = rvVehicleUniqueId,
         typeKey           = typeKey,
+        vehicleName       = script and script:getFullName() or nil,
         vehicleWorldPos   = { x = vehicle:getX(),
                               y = vehicle:getY(),
                               z = vehicle:getZ() },
-    })
+    }
+    if selectedRoom then
+        data.selectedRoom = { x = selectedRoom.x, y = selectedRoom.y, z = selectedRoom.z }
+    end
+    sendClientCommand(getPlayer(), RVM.MODULE, "associate", data)
 end
 
 -- Maps an X coordinate to a human-readable map region label.
 local function getRoomRegion(x)
-    if     x < 25000 then return "Main"
-    elseif x < 29000 then return "Update 1"
-    else                   return "Update 2"
-    end
+    return RVM.getRegionLabel(x)
 end
 
 -- Sends the dissociate command to the server.
 local function sendDissociate(rvVehicleUniqueId)
-    sendClientCommand(RVM.MODULE, "dissociate",
+    sendClientCommand(getPlayer(), RVM.MODULE, "dissociate",
         { rvVehicleUniqueId = rvVehicleUniqueId })
 end
 
@@ -140,8 +149,8 @@ function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
     o.vehicle            = vehicle
     o.roomW              = roomW
     o.roomH              = roomH
-    o.selectedRoomIndex  = nil   -- stores room.index (slot #), not list position
-    o.filterRegion       = "All"
+    o.selectedRoomIndex  = nil
+    o.filterRegion       = getText("IGUI_RVM_Region_All")
     o._lastSearch        = ""
     o.scrollY            = 0
     o.listY              = 0
@@ -153,8 +162,8 @@ function RVMRoomPicker:initialise()
     ISPanel.initialise(self)
 
     -- Close
-    local close = ISButton:new(self.width - 22, 4, 18, 20, "X",
-        self, RVMRoomPicker.onClose)
+    local close = ISButton:new(self.width - 22, 4, 18, 20,
+        getText("IGUI_RVM_Close"), self, RVMRoomPicker.onClose)
     close:initialise()
     close.backgroundColor = { r = 0.50, g = 0.10, b = 0.10, a = 1 }
     self:addChild(close)
@@ -168,7 +177,7 @@ function RVMRoomPicker:initialise()
 
     -- Build unique region options from freeRooms
     local seen    = {}
-    local regions = { "All" }
+    local regions = { getText("IGUI_RVM_Region_All") }
     for _, room in ipairs(self.freeRooms) do
         local r = getRoomRegion(room.x)
         if not seen[r] then
@@ -177,22 +186,23 @@ function RVMRoomPicker:initialise()
         end
     end
 
+    -- ISComboBox: addChild first (triggers instantiate internally), then addOption
     self.comboRegion = ISComboBox:new(RP_PAD, filterY, comboW, 24,
         self, RVMRoomPicker.onRegionChange)
-    self.comboRegion:initialise()
-    for _, r in ipairs(regions) do self.comboRegion:addOption(r) end
     self:addChild(self.comboRegion)
+    for _, r in ipairs(regions) do self.comboRegion:addOption(r) end
 
-    self.searchEntry = ISTextEntry:new(entryX, filterY, entryW, 24)
-    self.searchEntry:initialise()
-    self.searchEntry:setMaxLines(1)
-    self.searchEntry.font = UIFont.Small
+    -- ISTextEntryBox: addChild → initialise → setEditable
+    self.searchEntry = ISTextEntryBox:new("", entryX, filterY, entryW, 24)
     self:addChild(self.searchEntry)
+    self.searchEntry:initialise()
+    self.searchEntry:setEditable(true)
+    self.searchEntry:setPlaceholderText(getText("IGUI_RVM_Picker_SearchPlaceholder"))
 
     -- Confirm
     self.btnConfirm = ISButton:new(RP_PAD, self.height - RP_PAD - 26,
         self.width - RP_PAD * 2, 26,
-        "Assign Selected Room", self, RVMRoomPicker.onConfirm)
+        getText("IGUI_RVM_Picker_Confirm"), self, RVMRoomPicker.onConfirm)
     self.btnConfirm:initialise()
     self.btnConfirm.backgroundColor = { r = 0.10, g = 0.28, b = 0.10, a = 1 }
     self:addChild(self.btnConfirm)
@@ -213,8 +223,9 @@ function RVMRoomPicker:onClose()
     RVMRoomPicker.instance = nil
 end
 
-function RVMRoomPicker:onRegionChange(item)
-    self.filterRegion       = item
+-- onChange receives (target, combo, ...) — second arg is the ISComboBox itself.
+function RVMRoomPicker:onRegionChange(combo)
+    self.filterRegion       = combo:getSelectedText()
     self.selectedRoomIndex  = nil
     self.scrollY            = 0
     self:updateConfirm()
@@ -222,10 +233,12 @@ end
 
 -- Returns filtered subset of freeRooms based on region dropdown + search text.
 function RVMRoomPicker:getFiltered()
-    local search = (self.searchEntry and self.searchEntry:getText() or ""):lower()
+    local raw    = (self.searchEntry and self.searchEntry:getText()) or ""
+    local search = tostring(raw):lower()
+    local allRegion = getText("IGUI_RVM_Region_All")
     local result = {}
     for _, room in ipairs(self.freeRooms) do
-        local regionOk = (self.filterRegion == "All") or
+        local regionOk = (self.filterRegion == allRegion) or
                          (getRoomRegion(room.x) == self.filterRegion)
         local searchOk = search == "" or
                          tostring(room.x):find(search, 1, true) or
@@ -240,7 +253,6 @@ end
 
 function RVMRoomPicker:onConfirm()
     if not self.selectedRoomIndex then return end
-    -- Find the room in freeRooms by its original slot index.
     local room
     for _, r in ipairs(self.freeRooms) do
         if r.index == self.selectedRoomIndex then room = r; break end
@@ -253,7 +265,7 @@ function RVMRoomPicker:onConfirm()
         self.vehicle:getModData().projectRV_uniqueId = uid
     end
 
-    sendAssociate(tostring(uid), self.typeKey, self.vehicle)
+    sendAssociate(tostring(uid), self.typeKey, self.vehicle, room)
     self:onClose()
 end
 
@@ -263,14 +275,13 @@ function RVMRoomPicker:render()
     local x = RP_PAD
     local y = RP_PAD
 
-    -- Title
     local sizeStr = (self.roomW and self.roomH)
-        and ("  [" .. self.roomW .. "×" .. self.roomH .. "]")
+        and ("  [" .. self.roomW .. "x" .. self.roomH .. "]")
         or  ""
     local filtered = self:getFiltered()
 
     -- Detect search text change → deselect + reset scroll
-    local curSearch = self.searchEntry and self.searchEntry:getText() or ""
+    local curSearch = tostring((self.searchEntry and self.searchEntry:getText()) or "")
     if curSearch ~= self._lastSearch then
         self._lastSearch       = curSearch
         self.selectedRoomIndex = nil
@@ -282,28 +293,22 @@ function RVMRoomPicker:render()
         and ("(" .. #self.freeRooms .. " free)")
         or  ("(" .. #filtered .. " / " .. #self.freeRooms .. " free)")
     self:drawText(
-        "Select Room — " .. self.typeKey .. sizeStr .. "  " .. countStr,
+        getText("IGUI_RVM_Picker_Title") .. " - " .. self.typeKey .. sizeStr .. "  " .. countStr,
         x, y, 1, 1, 0.6, 1, UIFont.Small)
     y = y + RP_HDR
 
     -- Filter row background (child widgets draw on top)
     self:drawRect(x, y, self.width - RP_PAD * 2, RP_FILTER_H,
         1, 0.10, 0.10, 0.14)
-    -- Draw placeholder hint inside search box if empty
-    if curSearch == "" then
-        local entryX = RP_PAD + 130 + 4
-        self:drawText("Search X / Y / Z…",
-            entryX + 4, y + 5, 0.4, 0.4, 0.4, 1, UIFont.Small)
-    end
     y = y + RP_FILTER_H
 
     -- Column headers
     self:drawRect(x, y, self.width - RP_PAD * 2, RP_HDR, 1, 0.12, 0.12, 0.18)
-    self:drawText("#",      x + 2,   y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText("Region", x + 38,  y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText("X",      x + 118, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText("Y",      x + 198, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText("Z",      x + 278, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    self:drawText(getText("IGUI_RVM_Picker_Col_Num"),    x + 2,   y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    self:drawText(getText("IGUI_RVM_Picker_Col_Region"), x + 38,  y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    self:drawText("X",                                   x + 118, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    self:drawText("Y",                                   x + 198, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    self:drawText("Z",                                   x + 278, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
     y = y + RP_HDR
 
     self.listY = y
@@ -373,95 +378,72 @@ end
 -- ============================================================
 -- Context Menu injection
 -- ============================================================
-local function onContextMenu(playerIndex, context, worldObjects)
-    local player = getSpecificPlayer(playerIndex)
-    if not player or not isAdmin(player) then return end
+-- Patch ISVehicleMenu.FillMenuOutsideVehicle — the engine always calls this
+-- when a player right-clicks a vehicle from outside, in both SP and MP.
+-- OnFillWorldObjectContextMenu is NOT reliable for vehicles: when the clicked
+-- tile has no other world objects, fetch.c == 0 and the event never fires.
+local _origFillMenuOutside = ISVehicleMenu.FillMenuOutsideVehicle
 
-    -- Get the vehicle that was actually right-clicked from the world objects list.
-    -- ISVehicleMenu.getVehicleToInteractWith uses proximity to the player, not
-    -- the click position, so it can target the wrong vehicle.
-    local vehicle = nil
-    if worldObjects then
-        -- B42 passes a Lua table; B41 passed a Java ArrayList.
-        local isJavaList = type(worldObjects.size) == "function"
-        local count = isJavaList and worldObjects:size() or #worldObjects
-        for i = 0, count - 1 do
-            local obj = isJavaList and worldObjects:get(i) or worldObjects[i + 1]
-            if obj and instanceof(obj, "IsoVehicle") then
-                vehicle = obj
-                break
-            end
-        end
-    end
-    if not vehicle then return end
+function ISVehicleMenu.FillMenuOutsideVehicle(player, context, vehicle, test)
+    _origFillMenuOutside(player, context, vehicle, test)
+
+    local playerObj = getSpecificPlayer(player)
+    if not playerObj or not isAdmin(playerObj) then return end
 
     local typeKey = getRVTypeKey(vehicle)
     if not typeKey then return end
 
-    local uid      = vehicle:getModData().projectRV_uniqueId
+    local uid          = vehicle:getModData().projectRV_uniqueId
     local assignedRvId = uid and getAssignedRvId(vehicle, typeKey)
 
     if assignedRvId then
         -- Vehicle already has a room — offer Dissociate
-        context:addOption(
-            "[RVM] Dissociate RV Interior",
-            vehicle,
-            function(veh)
-                sendDissociate(tostring(veh:getModData().projectRV_uniqueId))
-            end
-        )
+        local fn = function()
+            sendDissociate(tostring(vehicle:getModData().projectRV_uniqueId))
+        end
+        context:addOption(getText("IGUI_RVM_Ctx_Dissociate"), fn, fn)
     else
-        -- Vehicle has no room — offer Add (random or choose)
-        local freeRooms = getFreeRooms(typeKey)
+        -- Vehicle has no room — offer Associate (random or choose)
+        local freeRooms    = getFreeRooms(typeKey)
         local roomW, roomH = getRoomSize(typeKey)
-        local sizeTag = (roomW and roomH) and (" [" .. roomW .. "×" .. roomH .. "]") or ""
+        local sizeTag      = (roomW and roomH) and (" [" .. roomW .. "x" .. roomH .. "]") or ""
 
         if #freeRooms == 0 then
-            -- No slots available — add a greyed-out informational entry
-            local opt = context:addOption("[RVM] No free rooms (" .. typeKey .. sizeTag .. ")", nil, nil)
+            local opt = context:addOption(getText("IGUI_RVM_Ctx_NoFreeRooms", typeKey, sizeTag), nil, nil)
             context:setOptionEnabled(opt, false)
             return
         end
 
-        local addOption = context:addOption(
-            "[RVM] Add RV Interior (" .. typeKey .. sizeTag .. ")",
-            nil, nil)
+        local addOpt = context:addOption(
+            getText("IGUI_RVM_Ctx_Associate", typeKey, sizeTag), nil, nil)
 
-        local subMenu = context:getNew(context)
-        context:addSubMenu(addOption, subMenu)
+        local subMenu = ISContextMenu:getNew(context)
+        context:addSubMenu(addOpt, subMenu)
 
         -- Random assignment
-        subMenu:addOption(
-            "Assign random room",
-            vehicle,
-            function(veh)
-                local u = veh:getModData().projectRV_uniqueId
-                if not u then
-                    u = ZombRand(1, 99999999)
-                    veh:getModData().projectRV_uniqueId = u
-                end
-                sendAssociate(tostring(u), typeKey, veh)
+        local fnRandom = function()
+            local u = vehicle:getModData().projectRV_uniqueId
+            if not u then
+                u = ZombRand(1, 99999999)
+                vehicle:getModData().projectRV_uniqueId = u
             end
-        )
+            sendAssociate(tostring(u), typeKey, vehicle)
+        end
+        subMenu:addOption(getText("IGUI_RVM_Ctx_RandomRoom"), fnRandom, fnRandom)
 
         -- Manual room selection
-        subMenu:addOption(
-            "Choose room... (" .. #freeRooms .. " available)",
-            vehicle,
-            function(veh)
-                if RVMRoomPicker.instance then
-                    RVMRoomPicker.instance:removeFromUIManager()
-                end
-                local picker = RVMRoomPicker:new(typeKey, freeRooms, veh, roomW, roomH)
-                picker:initialise()
-                picker:addToUIManager()
-                RVMRoomPicker.instance = picker
+        local fnPicker = function()
+            if RVMRoomPicker.instance then
+                RVMRoomPicker.instance:removeFromUIManager()
             end
-        )
+            local picker = RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
+            picker:initialise()
+            picker:addToUIManager()
+            RVMRoomPicker.instance = picker
+        end
+        subMenu:addOption(getText("IGUI_RVM_Ctx_ChooseRoom", tostring(#freeRooms)), fnPicker, fnPicker)
     end
 end
-
-Events.OnFillWorldObjectContextMenu.Add(onContextMenu)
 
 -- ============================================================
 -- Server response listener (associate / dissociate feedback)
@@ -469,10 +451,14 @@ Events.OnFillWorldObjectContextMenu.Add(onContextMenu)
 local function onServerCommand(module, command, args)
     if module ~= RVM.MODULE then return end
 
+    if command == "accessDenied" then
+        local p = getSpecificPlayer(0)
+        if p then p:Say(getText("IGUI_RVM_Err_AccessDenied")) end
+        return
+    end
+
     if command == "associateResult" then
         if args and args.ok then
-            -- Mirror the assignment into the client's ModData copy so the next
-            -- context menu open sees the correct state without needing transmit().
             local rvId    = args.rvVehicleUniqueId
             local typeKey = args.typeKey
             local room    = args.room
@@ -484,14 +470,11 @@ local function onServerCommand(module, command, args)
                 base[dataKey][tostring(rvId)] = { x = room.x, y = room.y, z = room.z }
             end
         elseif args and not args.ok then
-            local player = getSpecificPlayer(0)
-            if player then
-                player:Say("[RVM] Associate failed: " .. (args.err or "unknown error"))
-            end
+            local p = getSpecificPlayer(0)
+            if p then p:Say(getText("IGUI_RVM_Err_AssocFailed", args.err or "unknown error")) end
         end
     elseif command == "dissociateResult" then
         if args and args.ok then
-            -- Remove from the client's ModData copy.
             local rvId    = args.rvVehicleUniqueId
             local typeKey = args.typeKey
             if rvId and typeKey then
@@ -503,10 +486,8 @@ local function onServerCommand(module, command, args)
                 end
             end
         elseif args and not args.ok then
-            local player = getSpecificPlayer(0)
-            if player then
-                player:Say("[RVM] Dissociate failed: " .. (args.err or "unknown error"))
-            end
+            local p = getSpecificPlayer(0)
+            if p then p:Say(getText("IGUI_RVM_Err_DissocFailed", args.err or "unknown error")) end
         end
     end
 end

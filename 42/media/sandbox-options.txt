@@ -1,0 +1,9 @@
+VERSION = 1,
+
+option RVM.RequireAdminToAssociate
+{
+    type = boolean,
+    default = false,
+    page = RVM,
+    translation = RVM_RequireAdminToAssociate,
+}

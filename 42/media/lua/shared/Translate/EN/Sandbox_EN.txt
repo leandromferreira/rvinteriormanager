@@ -1,0 +1,6 @@
+Sandbox_EN = {
+    Sandbox_RVM = "RV Interior Manager",
+
+    Sandbox_RVM_RequireAdminToAssociate = "Require Admin to Associate Rooms",
+    Sandbox_RVM_RequireAdminToAssociate_tooltip = "When enabled, only admins and moderators can associate RV interior rooms with vehicles. Regular players cannot enter an RV that has no room assigned — ask an admin to associate a room first.",
+}

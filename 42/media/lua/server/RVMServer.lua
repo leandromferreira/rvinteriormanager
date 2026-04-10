@@ -53,15 +53,18 @@ local function buildRelationships()
 
         for rvId, roomCoords in pairs(assigned) do
             local rvIdStr = tostring(rvId)
-            local lastPos = vehicles[rvIdStr] or vehicles[rvId]
+            -- Skip: a numeric key may be a duplicate of an already-processed string key.
+            if not rels[rvIdStr] then
+                local lastPos = vehicles[rvIdStr] or vehicles[rvId]
 
-            rels[rvIdStr] = {
-                rvVehicleUniqueId = rvIdStr,
-                typeKey           = typeKey,
-                dataKey           = dataKey,
-                room              = { x = roomCoords.x, y = roomCoords.y, z = roomCoords.z },
-                lastPos           = lastPos and { x = lastPos.x, y = lastPos.y, z = lastPos.z },
-            }
+                rels[rvIdStr] = {
+                    rvVehicleUniqueId = rvIdStr,
+                    typeKey           = typeKey,
+                    dataKey           = dataKey,
+                    room              = { x = roomCoords.x, y = roomCoords.y, z = roomCoords.z },
+                    lastPos           = lastPos and { x = lastPos.x, y = lastPos.y, z = lastPos.z },
+                }
+            end
         end
     end
 
@@ -131,112 +134,55 @@ end
 -- Builds the initial relationship table from whatever is already
 -- in the base mod's ModData (handles pre-existing saves).
 local function bootstrap()
+    print("[RVM] bootstrap: starting")
+
     local rels = buildRelationships()
     local d    = ModData.getOrCreate(RVM.POS_DATA_KEY)
+
+    -- Preserve dates and cached vehicle names from a previous session.
+    local preserved = 0
+    if d.relationships then
+        for rvId, rel in pairs(d.relationships) do
+            if rels[rvId] then
+                rels[rvId].dateLinked    = rel.dateLinked
+                rels[rvId].lastEnterDate = rel.lastEnterDate
+                rels[rvId].lastOutDate   = rel.lastOutDate
+                rels[rvId].vehicleName   = rel.vehicleName
+                preserved = preserved + 1
+            end
+        end
+    end
 
     d.relationships = rels
 
     -- Prime the position cache so the first check has a baseline.
     local base     = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
     local vehicles = base.Vehicles or {}
+    local cached   = 0
     for rvId, pos in pairs(vehicles) do
         posCache[tostring(rvId)] = { x = pos.x or 0, y = pos.y or 0, z = pos.z or 0 }
+        cached = cached + 1
     end
 
+    local relCount = 0
+    for _ in pairs(rels) do relCount = relCount + 1 end
+
+    print("[RVM] bootstrap: relationships=" .. relCount
+        .. " preserved=" .. preserved
+        .. " posCache=" .. cached)
+
     Events.OnTick.Add(onTick)
+    print("[RVM] bootstrap: done")
 end
 
 Events.OnInitWorld.Add(bootstrap)
 
 -- ============================================================
--- React to base mod enter/exit events
--- ============================================================
--- Both our handler and the base mod's handler run in the same tick.
--- Because the base mod registered OnClientCommand first, its handler
--- runs before ours, so modData.Players[playerId].VehicleId is already
--- set (enterRV) or VehicleId still present (exitRV — GetOutFromRV only
--- clears ActualRoom/RoomType, not VehicleId).
-local function onClientCommand(module, command, player, data)
-    if module ~= "RVServer" then return end
-    if command ~= "enterRV" and command ~= "exitRV" then return end
-
-    -- Capture the rvId and timestamp now (base mod already ran).
-    local capturedRvId, capturedField
-    local pmd = player:getModData()
-    local playerId = pmd and pmd.projectRV_playerId
-    if playerId then
-        local base       = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
-        local playerData = base.Players and base.Players[playerId]
-        if playerData and playerData.VehicleId then
-            capturedRvId  = tostring(playerData.VehicleId)
-            capturedField = (command == "enterRV") and "lastEnterDate" or "lastOutDate"
-        end
-    end
-    local capturedDate = os.date("%d/%m/%Y %H:%M")
-
-    local function rebuild()
-        local d = ModData.getOrCreate(RVM.POS_DATA_KEY)
-
-        -- Preserve dates before wiping relationships.
-        local savedDates = {}
-        if d.relationships then
-            for rvId, rel in pairs(d.relationships) do
-                savedDates[rvId] = {
-                    dateLinked    = rel.dateLinked,
-                    lastEnterDate = rel.lastEnterDate,
-                    lastOutDate   = rel.lastOutDate,
-                }
-            end
-        end
-
-        d.relationships = buildRelationships()
-
-        -- Restore preserved dates.
-        for rvId, dates in pairs(savedDates) do
-            if d.relationships[rvId] then
-                d.relationships[rvId].dateLinked    = dates.dateLinked
-                d.relationships[rvId].lastEnterDate = dates.lastEnterDate
-                d.relationships[rvId].lastOutDate   = dates.lastOutDate
-            end
-        end
-
-        -- Apply the new date event.
-        if capturedRvId and capturedField and d.relationships[capturedRvId] then
-            d.relationships[capturedRvId][capturedField] = capturedDate
-        end
-
-        Events.OnTick.Remove(rebuild)
-    end
-    Events.OnTick.Add(rebuild)
-end
-
-Events.OnClientCommand.Add(onClientCommand)
-
--- ============================================================
--- Request/response handler — admin panel data
--- ============================================================
--- The client sends sendClientCommand(RVM.MODULE, "requestData", {})
--- The server responds with sendServerCommand(player, RVM.MODULE,
---   "responseData", payload) where payload has the shape:
---
---   {
---       summary = {
---           ["normal"] = { totalRooms=38, occupied=5, free=33 },
---           ...
---       },
---       assignments = {
---           {
---               rvVehicleUniqueId = "47382910",
---               vehicleId         = 1234,           -- nil if chunk unloaded
---               typeKey           = "normal",
---               room              = { x, y, z },
---               lastPos           = { x, y, z },    -- nil if never recorded
---           },
---           ...
---       },
---   }
+-- buildNameMap()
 -- ============================================================
 -- Scan loaded vehicles once and build rvUniqueId → script full name.
+-- Must be defined before onClientCommand which calls it.
+-- ============================================================
 local function buildNameMap()
     local names = {}
     local ok, cell = pcall(getCell)
@@ -257,6 +203,122 @@ local function buildNameMap()
     return names
 end
 
+-- ============================================================
+-- React to base mod enter/exit events
+-- ============================================================
+-- Both our handler and the base mod's handler run in the same tick.
+-- Because the base mod registered OnClientCommand first, its handler
+-- runs before ours, so modData.Players[playerId].VehicleId is already
+-- set (enterRV) or VehicleId still present (exitRV — GetOutFromRV only
+-- clears ActualRoom/RoomType, not VehicleId).
+local function onClientCommand(module, command, player, data)
+    if module ~= "RVServer" then return end
+    if command ~= "enterRV" and command ~= "exitRV" then return end
+
+    print("[RVM] onClientCommand: command=" .. tostring(command)
+        .. " player=" .. tostring(player:getUsername()))
+
+    -- Capture the rvId and timestamp now (base mod already ran).
+    local capturedRvId, capturedField, capturedVehicleName
+    local pmd = player:getModData()
+    local playerId = pmd and pmd.projectRV_playerId
+    print("[RVM]   playerId=" .. tostring(playerId))
+    if playerId then
+        local base       = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+        local playerData = base.Players and base.Players[playerId]
+        if playerData and playerData.VehicleId then
+            capturedRvId  = tostring(playerData.VehicleId)
+            capturedField = (command == "enterRV") and "lastEnterDate" or "lastOutDate"
+            -- Capture vehicle name while vehicle is still in loaded chunks.
+            local nameMap = buildNameMap()
+            capturedVehicleName = nameMap[capturedRvId]
+            print("[RVM]   capturedRvId=" .. capturedRvId
+                .. " capturedField=" .. capturedField
+                .. " vehicleName=" .. tostring(capturedVehicleName))
+        else
+            print("[RVM]   WARNING: playerData or VehicleId missing for playerId=" .. tostring(playerId))
+        end
+    end
+    local capturedDate = os.date("%d/%m/%Y %H:%M")
+    print("[RVM]   capturedDate=" .. capturedDate)
+
+    local function rebuild()
+        local d = ModData.getOrCreate(RVM.POS_DATA_KEY)
+
+        -- Preserve dates before wiping relationships.
+        local savedDates = {}
+        if d.relationships then
+            for rvId, rel in pairs(d.relationships) do
+                savedDates[rvId] = {
+                    dateLinked    = rel.dateLinked,
+                    lastEnterDate = rel.lastEnterDate,
+                    lastOutDate   = rel.lastOutDate,
+                    vehicleName   = rel.vehicleName,
+                }
+            end
+        end
+
+        d.relationships = buildRelationships()
+
+        -- Restore preserved dates and cached vehicle names.
+        for rvId, dates in pairs(savedDates) do
+            if d.relationships[rvId] then
+                d.relationships[rvId].dateLinked    = dates.dateLinked
+                d.relationships[rvId].lastEnterDate = dates.lastEnterDate
+                d.relationships[rvId].lastOutDate   = dates.lastOutDate
+                d.relationships[rvId].vehicleName   = dates.vehicleName
+            end
+        end
+
+        -- For entries that appeared brand-new (base mod just assigned them),
+        -- set dateLinked now since this is the first time we see them.
+        for rvId, rel in pairs(d.relationships) do
+            if not rel.dateLinked and not savedDates[rvId] then
+                rel.dateLinked = capturedDate
+            end
+        end
+
+        -- Persist the vehicle name captured while vehicle was still loaded.
+        if capturedRvId and capturedVehicleName and d.relationships[capturedRvId] then
+            d.relationships[capturedRvId].vehicleName = capturedVehicleName
+        end
+
+        -- Apply the new date event (lastEnterDate or lastOutDate).
+        if capturedRvId and capturedField and d.relationships[capturedRvId] then
+            d.relationships[capturedRvId][capturedField] = capturedDate
+        end
+
+        Events.OnTick.Remove(rebuild)
+    end
+    Events.OnTick.Add(rebuild)
+end
+
+Events.OnClientCommand.Add(onClientCommand)
+
+-- ============================================================
+-- Request/response handler — admin panel data
+-- ============================================================
+-- The client sends sendClientCommand(getPlayer(), RVM.MODULE, "requestData", {})
+-- The server responds with sendServerCommand(player, RVM.MODULE,
+--   "responseData", payload) where payload has the shape:
+--
+--   {
+--       summary = {
+--           ["normal"] = { totalRooms=38, occupied=5, free=33 },
+--           ...
+--       },
+--       assignments = {
+--           {
+--               rvVehicleUniqueId = "47382910",
+--               vehicleId         = 1234,           -- nil if chunk unloaded
+--               typeKey           = "normal",
+--               room              = { x, y, z },
+--               lastPos           = { x, y, z },    -- nil if never recorded
+--           },
+--           ...
+--       },
+--   }
+-- ============================================================
 local function buildResponse()
     local roomData = RVM.readRoomData()
     if not roomData then return nil end
@@ -267,20 +329,45 @@ local function buildResponse()
     local summary  = {}
     local assignments = {}
 
+    print("[RVM] buildResponse: building response, relationships stored=" .. (function()
+        local n = 0; for _ in pairs(rels) do n = n + 1 end; return n
+    end)())
+
     for typeKey, typeInfo in pairs(roomData) do
         summary[typeKey] = {
             totalRooms = typeInfo.totalRooms,
             occupied   = typeInfo.occupied,
             free       = typeInfo.free,
+            roomW      = typeInfo.roomW,
+            roomH      = typeInfo.roomH,
         }
 
         for _, room in ipairs(typeInfo.rooms) do
             if room.rvVehicleUniqueId then
-                local rel = rels[room.rvVehicleUniqueId] or {}
+                local rvId = room.rvVehicleUniqueId
+                local rel  = rels[rvId] or {}
+
+                -- Use live name from loaded chunk, fall back to cached name in relationship.
+                local vehicleName = nameMap[rvId] or rel.vehicleName
+                -- Persist the name in relationship so it survives chunk unloads.
+                if vehicleName and rel.vehicleName ~= vehicleName and rels[rvId] then
+                    rels[rvId].vehicleName = vehicleName
+                end
+
+                print("[RVM]   record rvId=" .. tostring(rvId)
+                    .. " type=" .. tostring(typeKey)
+                    .. " name=" .. tostring(vehicleName)
+                    .. " lastPos=" .. (rel.lastPos and
+                        string.format("%.1f,%.1f", rel.lastPos.x or 0, rel.lastPos.y or 0)
+                        or "nil")
+                    .. " dateLinked=" .. tostring(rel.dateLinked)
+                    .. " lastEnterDate=" .. tostring(rel.lastEnterDate)
+                    .. " lastOutDate=" .. tostring(rel.lastOutDate))
+
                 table.insert(assignments, {
-                    rvVehicleUniqueId = room.rvVehicleUniqueId,
+                    rvVehicleUniqueId = rvId,
                     vehicleId         = room.vehicleId,
-                    vehicleName       = nameMap[room.rvVehicleUniqueId],
+                    vehicleName       = vehicleName,
                     typeKey           = typeKey,
                     room              = { x = room.x, y = room.y, z = room.z },
                     lastPos           = rel.lastPos,
@@ -292,6 +379,7 @@ local function buildResponse()
         end
     end
 
+    print("[RVM] buildResponse: total assignments=" .. #assignments)
     return { summary = summary, assignments = assignments }
 end
 
@@ -299,7 +387,8 @@ local function onAdminCommand(module, command, player, data)
     if module ~= RVM.MODULE then return end
 
     if command == "requestData" then
-        if not player:isAccessLevel("admin") and not player:isAccessLevel("moderator") then
+        local lvl = string.lower(player:getAccessLevel() or "")
+        if lvl ~= "admin" and lvl ~= "moderator" then
             return
         end
         local response = buildResponse()
@@ -308,7 +397,7 @@ local function onAdminCommand(module, command, player, data)
         end
 
     elseif command == "dissociate" then
-        if not player:isAccessLevel("admin") then return end
+        if string.lower(player:getAccessLevel() or "") ~= "admin" then return end
         local rvId = data and data.rvVehicleUniqueId
         -- Capture typeKey BEFORE the relationship is deleted.
         local d2  = ModData.getOrCreate(RVM.POS_DATA_KEY)
@@ -319,11 +408,13 @@ local function onAdminCommand(module, command, player, data)
             { ok = ok, err = err, rvVehicleUniqueId = rvId, typeKey = dissTypeKey })
 
     elseif command == "associate" then
-        if not player:isAccessLevel("admin") then return end
-        local rvId   = data and data.rvVehicleUniqueId
-        local typeKey = data and data.typeKey
-        local pos     = data and data.vehicleWorldPos
-        local room, err = RVMServer.associate(rvId, typeKey, pos)
+        if string.lower(player:getAccessLevel() or "") ~= "admin" then return end
+        local rvId        = data and data.rvVehicleUniqueId
+        local typeKey     = data and data.typeKey
+        local pos         = data and data.vehicleWorldPos
+        local vehicleName = data and data.vehicleName
+        local selRoom     = data and data.selectedRoom
+        local room, err = RVMServer.associate(rvId, typeKey, pos, vehicleName, selRoom)
         sendServerCommand(player, RVM.MODULE, "associateResult",
             { ok = room ~= nil, err = err, rvVehicleUniqueId = rvId,
               typeKey = typeKey, room = room })
@@ -392,7 +483,7 @@ end
 -- Returns the assigned room { x, y, z } on success,
 -- or nil + error string on failure.
 -- ============================================================
-function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos)
+function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos, vehicleName, selectedRoom)
     if not rvVehicleUniqueId then return nil, "rvVehicleUniqueId is nil" end
     if not typeKey            then return nil, "typeKey is nil"            end
 
@@ -413,8 +504,17 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos)
 
     base[dataKey] = base[dataKey] or {}
 
-    -- Reject if already assigned.
-    if base[dataKey][rvId] then
+    -- Normalise: the base mod may have stored the assignment under a numeric key
+    -- (e.g. base.AssignedRooms[12345]) while we always use string keys ("12345").
+    -- Move it to the string key so subsequent reads are consistent.
+    local numId = tonumber(rvId)
+    if numId and base[dataKey][numId] and not base[dataKey][rvId] then
+        base[dataKey][rvId]  = base[dataKey][numId]
+        base[dataKey][numId] = nil
+    end
+
+    -- Reject if already assigned (check both string and numeric key).
+    if base[dataKey][rvId] or (numId and base[dataKey][numId]) then
         return nil, "vehicle " .. rvId .. " already has a room assigned"
     end
 
@@ -439,7 +539,18 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos)
         return nil, "no free rooms available for type " .. typeKey
     end
 
-    local room = free[ZombRand(#free) + 1]
+    -- Use the client-chosen room if provided and still free; otherwise random.
+    local room
+    if selectedRoom then
+        local sk = string.format("%d-%d-%d",
+            selectedRoom.x or 0, selectedRoom.y or 0, selectedRoom.z or 0)
+        if occupied[sk] then
+            return nil, "selected room is already occupied"
+        end
+        room = { x = selectedRoom.x, y = selectedRoom.y, z = selectedRoom.z }
+    else
+        room = free[ZombRand(#free) + 1]
+    end
 
     -- Write into the base mod's ModData.
     base[dataKey][rvId] = { x = room.x, y = room.y, z = room.z }
@@ -468,9 +579,82 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos)
             y = vehicleWorldPos.y or 0,
             z = vehicleWorldPos.z or 0,
         },
+        vehicleName       = vehicleName,
         dateLinked        = os.date("%d/%m/%Y %H:%M"),
     }
 
     return room
+end
+
+-- ============================================================
+-- Sandbox enforcement — wrap base mod's GetInToRV
+-- ============================================================
+-- GetInToRV is a global defined by RVServerMP_V3.lua (base mod).
+-- Because the base mod loads before ours, we can wrap it here at
+-- module-load time to intercept entry attempts BEFORE the player
+-- is teleported into the room.
+--
+-- When RequireAdminToAssociate is enabled and the vehicle has no
+-- pre-assigned room, non-admin players are denied entry and receive
+-- an accessDenied message — the base mod's GetInToRV is never called
+-- so no teleport occurs and the player stays where they are.
+-- ============================================================
+local _origGetInToRV = GetInToRV
+if _origGetInToRV then
+    GetInToRV = function(player, vehicle)
+        -- Only restrict on dedicated servers.
+        -- In SP, isClient() returns true on the server side, so we always allow.
+        if not isClient() then
+            local svars = SandboxVars and SandboxVars.RVM
+            local requireAdmin = (svars ~= nil and svars.RequireAdminToAssociate == true)
+
+            if requireAdmin and vehicle then
+                local okRV, RV = pcall(require, "RVVehicleTypes")
+                if okRV and RV and RV.VehicleTypes then
+                    local vehicleScriptName = tostring(vehicle:getScript():getFullName())
+
+                    -- Find typeKey for this vehicle script.
+                    local typeKey = nil
+                    for key, def in pairs(RV.VehicleTypes) do
+                        if def.scripts then
+                            for _, s in ipairs(def.scripts) do
+                                if s == vehicleScriptName then typeKey = key; break end
+                            end
+                        end
+                        if typeKey then break end
+                    end
+
+                    if typeKey then
+                        local base       = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+                        local assignedKey = (typeKey == "normal") and "AssignedRooms"
+                                                                   or  ("AssignedRooms" .. typeKey)
+                        local vmd       = vehicle:getModData()
+                        local vehicleId = vmd and vmd.projectRV_uniqueId
+                        local strId     = vehicleId and tostring(vehicleId)
+                        local numId     = vehicleId and tonumber(vehicleId)
+                        local assigned  = base[assignedKey]
+                        local hasRoom   = assigned and strId and (
+                            assigned[strId] or (numId and assigned[numId])
+                        )
+
+                        if not hasRoom then
+                            -- No room assigned yet; base mod would auto-assign one.
+                            -- Block non-admin players.
+                            local lvl = string.lower(player:getAccessLevel() or "")
+                            if lvl ~= "admin" and lvl ~= "moderator" then
+                                print("[RVM] Sandbox: blocking entry for non-admin '"
+                                    .. player:getUsername()
+                                    .. "' — vehicle " .. tostring(strId) .. " has no assigned room")
+                                sendServerCommand(player, RVM.MODULE, "accessDenied", {})
+                                return   -- player stays where they are
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        _origGetInToRV(player, vehicle)
+    end
 end
 

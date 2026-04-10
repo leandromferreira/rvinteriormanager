@@ -19,7 +19,10 @@
       "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/**)",
       "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/**)",
       "Read(//home/leandro/.steam/steam/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/media/lua/shared/**)",
-      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/media/lua/shared/**)"
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/content/108600/3618427553/mods/rvupdate/42/media/lua/shared/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/common/ProjectZomboid/projectzomboid/media/lua/client/ISUI/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/common/ProjectZomboid/media/**)",
+      "Read(//home/leandro/**)"
     ]
   }
 }

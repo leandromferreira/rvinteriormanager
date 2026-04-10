@@ -140,8 +140,25 @@ function RVM.readRoomData()
             occupied   = occupied,
             free       = free,
             rooms      = rooms,
+            roomW      = typeDef.roomWidth,
+            roomH      = typeDef.roomHeight,
         }
     end
 
     return result
+end
+
+-- ============================================================
+-- RVM.getRegionLabel(x)
+-- ============================================================
+-- Returns a human-readable map region label based on the world X
+-- coordinate.  Shared by the context menu room picker and the
+-- admin panel region filter.
+-- ============================================================
+function RVM.getRegionLabel(x)
+    if not x then return "-" end
+    if     x < 25000 then return getText("IGUI_RVM_Region_Main")
+    elseif x < 29000 then return getText("IGUI_RVM_Region_Update1")
+    else                   return getText("IGUI_RVM_Region_Update2")
+    end
 end
