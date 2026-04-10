@@ -1,0 +1,112 @@
+[h1][B42] RV Interior Manager[/h1]
+
+A companion admin panel for [b]PROJECT RV Interior[/b] (and its expansion mods). Gives server admins full visibility and control over every vehicle-to-room assignment in the save, with real-time position tracking, sorting, filtering, and manual assignment tools.
+
+[hr][/hr]
+
+[h2]Requirements[/h2]
+
+[table]
+[tr][th]Mod[/th][th]Workshop ID[/th][/tr]
+[tr][td]PROJECT RV Interior[/td][td][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3543229299]3543229299[/url][/td][/tr]
+[/table]
+
+[i]Optional but recognised: RV Interior Update 1 (rvupdate) · RV Interior Update 2 (rvupdate2)[/i]
+
+[hr][/hr]
+
+[h2]Features[/h2]
+
+[h3]Admin Panel[/h3]
+Open via the [b]RV Interior Manager[/b] button in the radial menu (admin/moderator only).
+
+[b]Availability summary table[/b]
+[list]
+[*]One row per interior type (Normal, Bus, Small, Caravan, etc.)
+[*]Shows total slots, occupied, and free counts for each type
+[*]Click any column header to sort ascending/descending
+[/list]
+
+[b]Assignments table[/b]
+[list]
+[*]Lists every vehicle that currently has an interior room assigned
+[*]Columns: Vehicle ID · Name · Vehicle Position · RV Type · Room Position · Linked At · Last Enter · Last Exit
+[*]Click any column header to sort; click again to reverse
+[*]Hover over any cell to see the full untruncated value in a floating tooltip
+[/list]
+
+[b]Filter bar[/b]
+[list]
+[*]Search across: Car name, Vehicle ID, Room location, Vehicle location, Linked At date, Last Enter, Last Exit
+[*]Type any partial string to filter the list in real time
+[*]Type [b]-[/b] to find records with empty fields (e.g. vehicles never entered, or rooms without a linked date)
+[/list]
+
+[b]Action buttons[/b]
+[list]
+[*][b]Teleport to Vehicle[/b] — teleports the admin to the vehicle's last known world position
+[*][b]Teleport to Room[/b] — teleports the admin into the interior room
+[*][b]Dissociate[/b] — frees the room assignment; the vehicle will need a new room before anyone can enter it again
+[/list]
+
+[h3]Manual Association (context menu)[/h3]
+Right-click any supported vehicle from outside → Associate Interior:
+[list]
+[*][b]Random room[/b] — assigns the next available slot automatically
+[*][b]Choose room…[/b] — opens a room picker with region filter (Main / Update 1 / Update 2) and coordinate search; confirm to assign that specific room
+[/list]
+
+[h3]Sandbox Option — Require Admin to Associate[/h3]
+[i]Sandbox → RV Interior Manager → Require Admin to Associate Rooms[/i] (default: OFF)
+
+When enabled, only admins and moderators can associate a room to a vehicle. Regular players cannot enter an RV that has no room assigned — they are blocked before the teleport happens and receive an on-screen message. They stay in the world until an admin associates the vehicle.
+
+[hr][/hr]
+
+[h2]Short FAQ[/h2]
+
+[b]Game version:[/b] B42 Unstable (latest)
+[b]Multiplayer:[/b] Yes
+[b]Added midgame:[/b] Yes — pre-existing room assignments will show up in the panel immediately. Some fields (vehicle name, last position) will populate as vehicles are loaded into the world. The [b]Linked At[/b] date is the only field that cannot be recovered retroactively; it will be set to the first enter/exit event recorded after this mod is installed.
+
+[hr][/hr]
+
+[h2]Technical Information[/h2]
+
+[table]
+[tr][td]Workshop ID[/td][td]3704055215[/td][/tr]
+[tr][td]Mod ID[/td][td]rvinteriormanager[/td][/tr]
+[tr][td]Build[/td][td]42.16+[/td][/tr]
+[/table]
+
+[hr][/hr]
+
+[h2]Permissions for Modders[/h2]
+
+[b]Ask for permission.[/b]
+
+This mod may [b]not[/b] be included in modpacks, collections distributed as a single download, or any form of redistribution without the express permission of the original creator. Extensions and patches are also subject to this restriction. Having received permission, credit must be given to the original creator both within the mod files and wherever the mod is published online.
+
+[hr][/hr]
+
+[h2]Tested On[/h2]
+
+Dedicated server (Linux) · Build 42.16+
+
+[hr][/hr]
+
+[h2]Known Issues[/h2]
+
+[list]
+[*][b]Context menu shows "Associate" on an already-assigned vehicle (pre-existing worlds).[/b] This can happen the first time you right-click a vehicle whose chunk has not been loaded since the mod was installed — the client's local cache hasn't synced yet. Simply right-clicking a second time will show the correct [b]Dissociate[/b] option. No data is lost.
+[/list]
+
+[hr][/hr]
+
+[h2]Planned Features[/h2]
+
+[list]
+[*][b]Idle room cleaner[/b] — sandbox option to automatically dissociate vehicles that have not been entered after a configurable number of days, freeing up room slots without admin intervention.
+[*][b]Savage Vehicles integration[/b] — show melted/destroyed vehicle status alongside the assignment data in the panel.
+[*][b]AVCS / player-tracker integration[/b] — display the name of the last player associated with each vehicle directly in the assignments table.
+[/list]

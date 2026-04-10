@@ -1,6 +1,6 @@
 {
     "Sandbox_RVM": "Gerenciador de Interior de RV",
 
-    "RVM_RequireAdminToAssociate": "Exigir Admin para Associar Quartos",
-    "RVM_RequireAdminToAssociate_tooltip": "Quando ativado, apenas administradores e moderadores podem associar quartos de interior de RV a veículos. Jogadores comuns não conseguirão entrar em um RV sem quarto atribuído — peça a um administrador para associar o quarto primeiro."
+    "Sandbox_RVM_RequireAdminToAssociate": "Exigir Admin para Associar Quartos",
+    "Sandbox_RVM_RequireAdminToAssociate_tooltip": "Quando ativado, apenas administradores e moderadores podem associar quartos de interior de RV a veículos. Jogadores comuns não conseguirão entrar em um RV sem quarto atribuído — peça a um administrador para associar o quarto primeiro."
 }

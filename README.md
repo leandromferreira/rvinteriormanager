@@ -129,4 +129,24 @@ Admin right-clicks vehicle
 
 **Ask for permission.**
 
-This mod can only be added to and extended with the express permission from the original creator. Having received permission, credit must be given to the original creator, both within the files of the mod and wherever the mod roams online. If no permission is received you may not alter the mod.
+This mod may **not** be included in modpacks, collections distributed as a single download, or any form of redistribution without the express permission of the original creator. Extensions and patches are also subject to this restriction. Having received permission, credit must be given to the original creator both within the mod files and wherever the mod is published online.
+
+---
+
+## Tested On
+
+Dedicated server (Linux) · Build 42.16+
+
+---
+
+## Known Issues
+
+- **Context menu shows "Associate" on an already-assigned vehicle (pre-existing worlds).** This can happen the first time you right-click a vehicle whose chunk has not been loaded since the mod was installed — the client's local cache hasn't synced yet. Simply right-clicking a second time will show the correct **Dissociate** option. No data is lost.
+
+---
+
+## Planned Features
+
+- **Idle room cleaner** — sandbox option to automatically dissociate vehicles that have not been entered after a configurable number of days, freeing up room slots without admin intervention.
+- **Savage Vehicles integration** — show melted/destroyed vehicle status alongside the assignment data in the panel.
+- **AVCS / player-tracker integration** — display the name of the last player associated with each vehicle directly in the assignments table.
