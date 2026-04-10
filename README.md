@@ -111,7 +111,7 @@ Admin right-clicks vehicle
 
 **Game version:** B42 Unstable (latest)  
 **Multiplayer:** Yes  
-**Added midgame:** Yes — rooms already assigned before this mod was installed will appear in the panel without a "Linked At" date. The date is only recorded from the first enter/exit event observed after the mod is active.
+**Added midgame:** Yes — pre-existing room assignments will show up in the panel immediately. Some fields (vehicle name, last position) will populate as vehicles are loaded into the world. The **Linked At** date is the only field that cannot be recovered retroactively; it will be set to the first enter/exit event recorded after this mod is installed.
 
 ---
 
@@ -119,11 +119,9 @@ Admin right-clicks vehicle
 
 | | |
 |---|---|
-| Workshop ID | 3403870858 |
-| Mod ID | LifestyleHobbies |
-| Tiles Def | 5620 |
-| Build | 42.13.2+ |
-| Tags | Silly/Fun |
+| Workshop ID |  3704055215 |
+| Mod ID | rvinteriormanager |
+| Build | 42.16+ |
 
 ---
 
