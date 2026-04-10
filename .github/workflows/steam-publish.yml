@@ -1,0 +1,67 @@
+name: Publish to Steam Workshop
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+jobs:
+  publish:
+    # For PRs: only run when actually merged, not just closed.
+    if: github.event_name == 'push' || github.event.pull_request.merged == true
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so we can build the changenote
+
+      - name: Build changenote from recent commits
+        id: changenote
+        run: |
+          NOTE=$(git log -10 --pretty=format:"- %s" --no-merges)
+          # Steam VDF changenote must be a single line (escape newlines).
+          NOTE_ONELINE=$(echo "$NOTE" | tr '\n' ' | ')
+          echo "note=$NOTE_ONELINE" >> "$GITHUB_OUTPUT"
+
+      - name: Write workshop VDF
+        run: |
+          cat > workshop.vdf <<EOF
+          "workshopitem"
+          {
+              "appid"           "108600"
+              "publishedfileid" "3704055215"
+              "contentfolder"   "${{ github.workspace }}/42"
+              "previewfile"     "${{ github.workspace }}/poster.png"
+              "title"           "[B42] RV Interior Manager"
+              "description"     "See mod page for full description."
+              "visibility"      "0"
+              "changenote"      "${{ steps.changenote.outputs.note }}"
+          }
+          EOF
+
+      - name: Install SteamCMD
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y lib32gcc-s1
+          mkdir -p ~/steamcmd
+          curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
+            | tar -xz -C ~/steamcmd
+
+      - name: Publish to Steam Workshop
+        env:
+          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
+          STEAM_PASSWORD: ${{ secrets.STEAM_PASSWORD }}
+          STEAM_TOTP:     ${{ secrets.STEAM_TOTP }}
+        run: |
+          ~/steamcmd/steamcmd.sh \
+            +login "$STEAM_USERNAME" "$STEAM_PASSWORD" "$STEAM_TOTP" \
+            +workshop_build_item "${{ github.workspace }}/workshop.vdf" \
+            +quit

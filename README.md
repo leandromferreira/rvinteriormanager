@@ -133,6 +133,28 @@ This mod may **not** be included in modpacks, collections distributed as a singl
 
 ---
 
+## CI/CD — Steam Workshop Publishing
+
+Pushes and merged PRs to `main` automatically publish the mod to the Workshop via GitHub Actions ([`.github/workflows/steam-publish.yml`](.github/workflows/steam-publish.yml)).
+
+### Required GitHub Secrets
+
+Go to **Settings → Secrets and variables → Actions → New repository secret** and add:
+
+| Secret | Value |
+|---|---|
+| `STEAM_USERNAME` | Steam account username (dedicated deploy account recommended) |
+| `STEAM_PASSWORD` | Steam account password |
+| `STEAM_TOTP` | Steam Guard shared secret (base32) for TOTP generation |
+
+> **Tip:** Use a dedicated Steam account that co-owns the Workshop item instead of your personal account. To get the `STEAM_TOTP` shared secret, use a tool like [SteamTimeIdler](https://github.com/nicklvsa/go-steam-totp) or export it from the Steam mobile authenticator.
+
+### What gets uploaded
+
+The `42/` folder is uploaded as the mod content. `poster.png` is used as the Workshop preview image. The changenote is auto-generated from the last 10 commit messages.
+
+---
+
 ## Tested On
 
 Dedicated server (Linux) · Build 42.16+
