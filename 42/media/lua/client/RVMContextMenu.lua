@@ -133,9 +133,9 @@ local RP_HDR      = 22
 local RP_FILTER_H = 30   -- height of the filter/search row
 
 function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
-    local sw = getCore():getScreenWidth()
-    local sh = getCore():getScreenHeight()
-    local o  = ISPanel.new(self,
+    local sw  = getCore():getScreenWidth()
+    local sh  = getCore():getScreenHeight()
+    local o   = ISPanel.new(self,
         math.floor((sw - RP_W) / 2),
         math.floor((sh - RP_H) / 2),
         RP_W, RP_H)
@@ -144,17 +144,17 @@ function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
     o.borderColor     = { r = 0.35, g = 0.35, b = 0.50, a = 1.00 }
     o.moveWithMouse   = true
 
-    o.typeKey            = typeKey
-    o.freeRooms          = freeRooms
-    o.vehicle            = vehicle
-    o.roomW              = roomW
-    o.roomH              = roomH
-    o.selectedRoomIndex  = nil
-    o.filterRegion       = getText("IGUI_RVM_Region_All")
-    o._lastSearch        = ""
-    o.scrollY            = 0
-    o.listY              = 0
-    o.listH              = 0
+    o.typeKey           = typeKey
+    o.freeRooms         = freeRooms
+    o.vehicle           = vehicle
+    o.roomW             = roomW
+    o.roomH             = roomH
+    o.selectedRoomIndex = nil
+    o.filterRegion      = getText("IGUI_RVM_Region_All")
+    o._lastSearch       = ""
+    o.scrollY           = 0
+    o.listY             = 0
+    o.listH             = 0
     return o
 end
 
@@ -265,7 +265,9 @@ function RVMRoomPicker:onConfirm()
         self.vehicle:getModData().projectRV_uniqueId = uid
     end
 
-    sendAssociate(tostring(uid), self.typeKey, self.vehicle, room)
+    if self.typeKey then
+        sendAssociate(tostring(uid), self.typeKey, self.vehicle, room)
+    end
     self:onClose()
 end
 
@@ -293,7 +295,7 @@ function RVMRoomPicker:render()
         and ("(" .. #self.freeRooms .. " free)")
         or  ("(" .. #filtered .. " / " .. #self.freeRooms .. " free)")
     self:drawText(
-        getText("IGUI_RVM_Picker_Title") .. " - " .. self.typeKey .. sizeStr .. "  " .. countStr,
+        getText("IGUI_RVM_Picker_Title") .. " - " .. (self.typeKey or "") .. sizeStr .. "  " .. countStr,
         x, y, 1, 1, 0.6, 1, UIFont.Small)
     y = y + RP_HDR
 
@@ -410,7 +412,7 @@ function ISVehicleMenu.FillMenuOutsideVehicle(player, context, vehicle, test)
 
         if #freeRooms == 0 then
             local opt = context:addOption(getText("IGUI_RVM_Ctx_NoFreeRooms", typeKey, sizeTag), nil, nil)
-            context:setOptionEnabled(opt, false)
+            opt.notAvailable = true
             return
         end
 
@@ -431,7 +433,7 @@ function ISVehicleMenu.FillMenuOutsideVehicle(player, context, vehicle, test)
         end
         subMenu:addOption(getText("IGUI_RVM_Ctx_RandomRoom"), fnRandom, fnRandom)
 
-        -- Manual room selection
+        -- Same-type room picker
         local fnPicker = function()
             if RVMRoomPicker.instance then
                 RVMRoomPicker.instance:removeFromUIManager()
@@ -451,9 +453,14 @@ end
 local function onServerCommand(module, command, args)
     if module ~= RVM.MODULE then return end
 
-    if command == "accessDenied" then
+    local function rvm_notify(msg)
         local p = getSpecificPlayer(0)
-        if p then p:Say(getText("IGUI_RVM_Err_AccessDenied")) end
+        if p then p:Say(msg) end
+        print(msg)
+    end
+
+    if command == "accessDenied" then
+        rvm_notify(getText("IGUI_RVM_Err_AccessDenied"))
         return
     end
 
@@ -467,11 +474,15 @@ local function onServerCommand(module, command, args)
                 local dataKey = (typeKey == "normal") and "AssignedRooms"
                                                       or  ("AssignedRooms" .. typeKey)
                 base[dataKey] = base[dataKey] or {}
-                base[dataKey][tostring(rvId)] = { x = room.x, y = room.y, z = room.z }
+                local strId = tostring(rvId)
+                local numId = tonumber(rvId)
+                base[dataKey][strId] = { x = room.x, y = room.y, z = room.z }
+                if numId then
+                    base[dataKey][numId] = base[dataKey][strId]
+                end
             end
         elseif args and not args.ok then
-            local p = getSpecificPlayer(0)
-            if p then p:Say(getText("IGUI_RVM_Err_AssocFailed", args.err or "unknown error")) end
+            rvm_notify(getText("IGUI_RVM_Err_AssocFailed", args.err or "unknown error"))
         end
     elseif command == "dissociateResult" then
         if args and args.ok then
@@ -482,12 +493,14 @@ local function onServerCommand(module, command, args)
                 local dataKey = (typeKey == "normal") and "AssignedRooms"
                                                       or  ("AssignedRooms" .. typeKey)
                 if base[dataKey] then
-                    base[dataKey][tostring(rvId)] = nil
+                    local strId = tostring(rvId)
+                    local numId = tonumber(rvId)
+                    base[dataKey][strId] = nil
+                    if numId then base[dataKey][numId] = nil end
                 end
             end
         elseif args and not args.ok then
-            local p = getSpecificPlayer(0)
-            if p then p:Say(getText("IGUI_RVM_Err_DissocFailed", args.err or "unknown error")) end
+            rvm_notify(getText("IGUI_RVM_Err_DissocFailed", args.err or "unknown error"))
         end
     end
 end

@@ -19,11 +19,11 @@ Optional but recognised:
 ## Features
 
 ### Admin Panel
-Open via the **RV Interior Manager** button in the radial menu (admin/moderator only).
+Open via the **RV Interior Manager** button in the Admin Panel (admin/moderator only).
 
 **Availability summary table**
 - One row per interior type (Normal, Bus, Small, Caravan, etc.)
-- Shows total slots, occupied, and free counts for each type
+- Shows room dimensions, total slots, occupied, and free counts for each type
 - Click any column header to sort ascending/descending (`^` / `v` indicator)
 
 **Assignments table**
@@ -33,29 +33,42 @@ Open via the **RV Interior Manager** button in the radial menu (admin/moderator 
 - Hover over any cell to see the full untruncated value in a floating tooltip
 
 **Filter bar** (below the summary table)
-- Search across: Car name, Vehicle ID, Room location, Vehicle location, Linked At date, Last Enter, Last Exit
+- Search across: Car name, Vehicle ID, RV Type, Room location, Vehicle location, Linked At date, Last Enter, Last Exit
 - Type any partial string to filter the assignments list in real time
+- Type `-` to find records with empty fields (e.g. vehicles never entered)
 
-**Action buttons per row**
+**Action buttons**
 - **Teleport to Vehicle** — teleports the admin to the vehicle's last known world position
 - **Teleport to Room** — teleports the admin into the interior room
 - **Dissociate** — frees the room assignment; the vehicle will need a new room before anyone can enter it again
+- **Force Idle Check** — runs the idle room cleaner immediately instead of waiting for the next hourly cycle
 
 ### Manual Association (context menu)
 Right-click any supported vehicle from outside → Associate Interior:
 - **Random room** — assigns the next available slot automatically
-- **Choose room…** — opens a room picker showing all free slots with region filter (Main / Update 1 / Update 2) and coordinate search; confirm to assign that specific room
+- **Choose room…** — opens a room picker showing all free slots for that type with:
+  - Region filter dropdown (Main / Update 1 / Update 2)
+  - Coordinate search (type any partial X / Y / Z value)
+  - Scrollable list with row selection; confirm to assign that specific room
 
-### Sandbox Option — Require Admin to Associate
-`Sandbox → RV Interior Manager → Require Admin to Associate Rooms` (default: **ON**)
+### Sandbox Options
+
+**Require Admin to Associate** (`Sandbox → RV Interior Manager → Require Admin to Associate Rooms`, default: **OFF**)
 
 When enabled, only admins and moderators can associate a room to a vehicle. Regular players who try to enter an RV that has no room assigned are blocked before the teleport happens and receive an on-screen message. They stay in the world until an admin associates the vehicle.
+
+**Idle Room Cleaner** (`Sandbox → RV Interior Manager → Idle Cleanup Days`, default: **0 = disabled**)
+
+Automatically dissociates rooms that have not been entered for the configured number of real-world days.
+- Uses `lastEnterDate` as the reference; falls back to `dateLinked` if the vehicle was never entered
+- Runs once on world load and every ~60 minutes during the session
+- Every dissociation is written to `~/Zomboid/Logs/RVM_IdleCleanup.log` with full details (rvId, vehicle name, type, room coords, vehicle position, dates, days idle)
 
 ---
 
 ## How the Sync Works
 
-The base mod stores all assignments in a single shared `ModData` table (`modPROJECTRVInterior`). This manager mod builds its own denormalized table (`RVMPositionData`) on top of it.
+The base mod stores all assignments in a single shared `ModData` table (`modPROJECTRVInterior`). This manager mod builds its own denormalized table (`RVInteriorManager`) on top of it.
 
 ```
 Base mod ModData                      Manager ModData
@@ -70,7 +83,7 @@ Players[playerId]    = {...}            lastOutDate, vehicleName
 **Position tracking — dirty flag + periodic flush**
 1. Every ~1 second the server compares `modData.Vehicles` (updated by the base mod's `UpdateVehPos` client tick) against an in-memory cache.
 2. Vehicles that moved more than 0.5 tiles are flagged as dirty.
-3. Every ~10 seconds only the dirty positions are written to `RVMPositionData`. Vehicles that haven't moved generate zero writes.
+3. Every ~10 seconds only the dirty positions are written to `RVInteriorManager`. Vehicles that haven't moved generate zero writes.
 
 **Date tracking**
 When a player enters or exits a vehicle interior, the server records the timestamp in `relationships[vehicleId].lastEnterDate / lastOutDate`. Newly associated vehicles get a `dateLinked` timestamp.
@@ -99,7 +112,8 @@ Admin right-clicks vehicle
   sendClientCommand "associate" ──► RVMServer.associate()
                                       normalise numeric/string key
                                       guard against duplicates
-                                      write to base mod's AssignedRooms
+                                      write to base mod's AssignedRooms (string + numeric key)
+                                      set projectRV_uniqueId on server vehicle object
                                       update relationships table
                                       sendServerCommand ──► associateResult
 ◄────────────────────────────────── associateResult (ok / error)
@@ -119,8 +133,9 @@ Admin right-clicks vehicle
 
 | | |
 |---|---|
-| Workshop ID |  3704055215 |
+| Workshop ID | 3704055215 |
 | Mod ID | rvinteriormanager |
+| Version | 0.2 |
 | Build | 42.16+ |
 
 ---
@@ -164,11 +179,3 @@ Dedicated server (Linux) · Build 42.16+
 ## Known Issues
 
 - **Context menu shows "Associate" on an already-assigned vehicle (pre-existing worlds).** This can happen the first time you right-click a vehicle whose chunk has not been loaded since the mod was installed — the client's local cache hasn't synced yet. Simply right-clicking a second time will show the correct **Dissociate** option. No data is lost.
-
----
-
-## Planned Features
-
-- **Idle room cleaner** — sandbox option to automatically dissociate vehicles that have not been entered after a configurable number of days, freeing up room slots without admin intervention.
-- **Savage Vehicles integration** — show melted/destroyed vehicle status alongside the assignment data in the panel.
-- **AVCS / player-tracker integration** — display the name of the last player associated with each vehicle directly in the assignments table.

@@ -4,4 +4,4 @@ description=Admin panel para gerenciar as atribuicoes do mod RV Interior. Mostra
 require=PROJECTRVInterior42
 poster=poster.png
 category=features
-version=0.1
+version=0.2

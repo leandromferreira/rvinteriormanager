@@ -6,4 +6,16 @@ option RVM.RequireAdminToAssociate
     default = false,
     page = RVM,
     translation = RVM_RequireAdminToAssociate,
+    tooltip = RVM_RequireAdminToAssociate_tooltip,
+}
+
+option RVM.IdleCleanupDays
+{
+    type = integer,
+    min = 0,
+    max = 365,
+    default = 0,
+    page = RVM,
+    translation = RVM_IdleCleanupDays,
+    tooltip = RVM_IdleCleanupDays_tooltip,
 }

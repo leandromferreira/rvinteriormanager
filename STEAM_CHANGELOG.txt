@@ -1,0 +1,55 @@
+[h1]Changelog — RV Interior Manager[/h1]
+
+[hr][/hr]
+
+[h2]v0.2 — 2026-04-15[/h2]
+
+[h3]New Features[/h3]
+[list]
+[*][b]Idle Room Cleaner[/b] — new sandbox option [i]Idle Cleanup Days[/i] (0–365, default 0 = disabled). Automatically dissociates rooms not entered for the configured number of real-world days. Uses Last Enter date as reference; falls back to Linked At if the vehicle was never entered. Runs once on world load and every ~60 minutes. All dissociations are logged to [b]~/Zomboid/Logs/RVM_IdleCleanup.log[/b].
+
+[*][b]Force Idle Check[/b] button — triggers the idle room cleaner immediately from the admin panel without waiting for the next hourly cycle.
+
+[*][b]Room Picker[/b] — the "Choose room…" context menu option now opens a full picker panel with region filter (Main / Update 1 / Update 2), coordinate search, and a scrollable numbered list. Select a row and confirm to assign that exact room.
+
+[*][b]Column sorting[/b] — click any header in both the summary table and the assignments table to sort ascending; click again to reverse. Active column shows a [b]^[/b] / [b]v[/b] indicator.
+
+[*][b]Floating tooltip[/b] — hover over any cell in the assignments table to see the full untruncated value.
+
+[*][b]RV Type filter[/b] — new option in the filter field dropdown to search by interior type (normal, bus, small, etc.).
+
+[*][b]Bootstrap date stamping[/b] — on mid-save installs, pre-existing assignments with no Linked At date are stamped with the server start time, giving the idle cleaner a baseline for all vehicles from first load.
+[/list]
+
+[h3]Bug Fixes[/h3]
+[list]
+[*][b]MP: room assignment not found on enter[/b] — in multiplayer, the base mod's [i]ensureVehiclePersistentId()[/i] could generate a new random ID before the client's value synced to the server, causing the assigned room to never be found. The server now force-sets [i]projectRV_uniqueId[/i] directly on the vehicle object at association time.
+
+[*][b]MP: dual-key storage[/b] — room assignments are now written under both the string key and the numeric key in ModData so the base mod finds them regardless of which format it uses internally.
+
+[*][b]Dissociate clears all key variants[/b] — dissociation now removes the string key, the numeric key, and the original value from the base mod's AssignedRooms table, preventing ghost entries.
+
+[*][b]Context menu crash[/b] — [i]context:setOptionEnabled()[/i] does not exist in B42. Replaced with [i]opt.notAvailable = true[/i], the correct B42 API for greying out a menu option.
+
+[*][b]Sandbox option not appearing[/b] — translation was displaying as a raw key. Fixed: removed stale [i].txt[/i] translation files (B42.15+ only reads [i].json[/i]), fixed double-prefix bug ([i]Sandbox_Sandbox_RVM_...[/i] → [i]Sandbox_RVM_...[/i]), and corrected the option name to match the Lua access pattern.
+
+[*][b]Scroll direction inverted[/b] in admin panel — [i]onMouseWheel[/i] was subtracting the delta instead of adding it. Fixed for both the summary table and the assignments table.
+
+[*][b]Filter field labels[/b] renamed to match the assignments table column names exactly: "Car" → "Name", "Room Loc" → "RV Pos", "Vehicle Loc" → "Veh. Pos", "Linked At" → "Linked".
+[/list]
+
+[hr][/hr]
+
+[h2]v0.1 — 2026-04-10[/h2]
+
+Initial release.
+[list]
+[*]Admin panel with availability summary and assignments table
+[*]Teleport to vehicle / Teleport to room / Dissociate actions
+[*]Context menu association (random room) and dissociation
+[*]Sandbox option: Require Admin to Associate
+[*]Real-time vehicle position tracking (dirty-flag + periodic flush)
+[*]Date tracking: Linked At, Last Enter, Last Exit
+[*]Vehicle name caching across chunk loads
+[*]Support for PROJECT RV Interior + Update 1 + Update 2
+[/list]

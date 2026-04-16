@@ -118,6 +118,12 @@ function RVManagerPanel:initialise()
     self.btnDissoc.backgroundColor = { r = 0.40, g = 0.10, b = 0.10, a = 1 }
     self:addChild(self.btnDissoc)
 
+    self.btnForceIdle = ISButton:new(PAD + (BTN_W + PAD) * 3, by, BTN_W, BTN_H,
+        getText("IGUI_RVM_Btn_ForceIdle"), self, RVManagerPanel.forceIdleCleanup)
+    self.btnForceIdle:initialise()
+    self.btnForceIdle.backgroundColor = { r = 0.18, g = 0.18, b = 0.08, a = 1 }
+    self:addChild(self.btnForceIdle)
+
     -- Filter row: label + combo (field selector) + text entry (search term)
     local filterY    = PAD + TITLE_H + 2
     local labelW     = 42
@@ -129,6 +135,7 @@ function RVManagerPanel:initialise()
     local filterFields = {
         getText("IGUI_RVM_FilterField_Car"),
         getText("IGUI_RVM_FilterField_VehicleID"),
+        getText("IGUI_RVM_FilterField_RVType"),
         getText("IGUI_RVM_FilterField_RoomLoc"),
         getText("IGUI_RVM_FilterField_VehicleLoc"),
         getText("IGUI_RVM_FilterField_LinkedAt"),
@@ -193,9 +200,10 @@ function RVManagerPanel:updateButtons()
             or  { r = 0.4, g = 0.4, b = 0.4, a = 1 }
     end
 
-    apply(self.btnTpVeh,  a ~= nil and a.lastPos ~= nil)
-    apply(self.btnTpRoom, a ~= nil and a.room    ~= nil)
-    apply(self.btnDissoc, a ~= nil)
+    apply(self.btnTpVeh,   a ~= nil and a.lastPos ~= nil)
+    apply(self.btnTpRoom,  a ~= nil and a.room    ~= nil)
+    apply(self.btnDissoc,  a ~= nil)
+    apply(self.btnForceIdle, true)
 end
 
 function RVManagerPanel:onClose()
@@ -558,12 +566,12 @@ function RVManagerPanel:onMouseWheel(del)
         for _ in pairs(types) do count = count + 1 end
         local totalH    = count * ROW_H
         local maxScroll = math.max(0, totalH - self.summaryRegionH)
-        self.summaryScrollY = math.max(0, math.min(maxScroll, self.summaryScrollY - step))
+        self.summaryScrollY = math.max(0, math.min(maxScroll, self.summaryScrollY + step))
     else
         local filtered  = self:getFilteredAssignments()
         local totalH    = #filtered * ROW_H
         local maxScroll = math.max(0, totalH - self.assignContentH)
-        self.scrollY    = math.max(0, math.min(maxScroll, self.scrollY - step))
+        self.scrollY    = math.max(0, math.min(maxScroll, self.scrollY + step))
     end
 
     return true
@@ -594,6 +602,7 @@ function RVManagerPanel:getFilteredAssignments()
 
     local carField      = getText("IGUI_RVM_FilterField_Car")
     local vidField      = getText("IGUI_RVM_FilterField_VehicleID")
+    local rvTypeField   = getText("IGUI_RVM_FilterField_RVType")
     local roomLocField  = getText("IGUI_RVM_FilterField_RoomLoc")
     local vehLocField   = getText("IGUI_RVM_FilterField_VehicleLoc")
     local linkedField   = getText("IGUI_RVM_FilterField_LinkedAt")
@@ -614,6 +623,7 @@ function RVManagerPanel:getFilteredAssignments()
             local val
             if     field == carField     then val = fmt(a.vehicleName)
             elseif field == vidField     then val = fmt(a.rvVehicleUniqueId)
+            elseif field == rvTypeField  then val = fmt(a.typeKey)
             elseif field == roomLocField then val = fmtPos(a.room)
             elseif field == vehLocField  then val = fmtPos(a.lastPos)
             elseif field == linkedField  then val = fmt(a.dateLinked)
@@ -759,6 +769,10 @@ function RVManagerPanel:dissociate()
     self:updateButtons()
 end
 
+function RVManagerPanel:forceIdleCleanup()
+    sendClientCommand(getPlayer(), RVM.MODULE, "forceIdleCheck", {})
+end
+
 -- ============================================================
 -- Server response listener
 -- ============================================================
@@ -773,6 +787,8 @@ local function onServerCommand(module, command, args)
         if args and args.ok then
             panel:requestData()
         end
+    elseif command == "idleCheckResult" then
+        panel:requestData()
     end
 end
 

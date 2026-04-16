@@ -1,6 +1,7 @@
 {
     "Sandbox_RVM": "RV Interior Manager",
-
     "Sandbox_RVM_RequireAdminToAssociate": "Require Admin to Associate Rooms",
-    "Sandbox_RVM_RequireAdminToAssociate_tooltip": "When enabled, only admins and moderators can associate RV interior rooms with vehicles. Regular players cannot enter an RV that has no room assigned — ask an admin to associate a room first."
+    "Sandbox_RVM_RequireAdminToAssociate_tooltip": "When enabled, only admins and moderators can associate RV interior rooms with vehicles. Regular players cannot enter an RV that has no room assigned — ask an admin to associate a room first.",
+    "Sandbox_RVM_IdleCleanupDays": "Auto-Dissociate After Idle Days",
+    "Sandbox_RVM_IdleCleanupDays_tooltip": "Automatically dissociates rooms that have had no interaction for this many days. The last entry date is used; if never entered, the link date is used instead. Set to 0 to disable (default)."
 }

@@ -19,9 +19,12 @@ local posCache  = {}   -- [rvId] = { x, y, z }   last position written to ModDat
 local dirtySet  = {}   -- [rvId] = true            needs flush
 local tickCount = 0
 
-local MOVE_THRESHOLD = 0.5   -- tiles
-local CHECK_TICKS    = 60    -- ~1 s at 60 ticks/s
-local FLUSH_TICKS    = 600   -- ~10 s
+local MOVE_THRESHOLD     = 0.5      -- tiles
+local CHECK_TICKS        = 60       -- ~1 s at 60 ticks/s
+local FLUSH_TICKS        = 600      -- ~10 s
+local IDLE_CHECK_TICKS   = 216000   -- ~60 min at 60 ticks/s
+
+local idleTickCount = 0
 
 -- ============================================================
 -- buildRelationships()
@@ -113,10 +116,99 @@ local function flushDirty()
 end
 
 -- ============================================================
+-- Idle room cleaner
+-- ============================================================
+-- Appends msg to the idle-cleanup log file.
+-- Uses PZ's getFileWriter API (resolves paths relative to ~/Zomboid/).
+-- os.getenv and io are not available in PZ's server-side Kahlua VM.
+local function writeIdleLog(msg)
+    local f = getFileWriter("Logs/RVM_IdleCleanup.log", true, false)
+    if f then
+        f:write(msg .. "\n")
+        f:close()
+    end
+end
+
+-- Parses "DD/MM/YYYY HH:MM" → os.time value, or nil.
+local function parseDateToTime(dateStr)
+    if not dateStr then return nil end
+    local d, m, y, hh, mm = dateStr:match("(%d+)/(%d+)/(%d+) (%d+):(%d+)")
+    if not d then return nil end
+    return os.time({
+        day   = tonumber(d),  month  = tonumber(m),  year = tonumber(y),
+        hour  = tonumber(hh), min    = tonumber(mm),  sec  = 0,
+        isdst = false,
+    })
+end
+
+-- Returns whole days elapsed since dateStr, or nil if unparseable.
+local function daysSince(dateStr)
+    local t = parseDateToTime(dateStr)
+    if not t then return nil end
+    return math.floor((os.time() - t) / 86400)
+end
+
+local function checkIdleRooms()
+    local svars    = SandboxVars and SandboxVars.RVM
+    local idleDays = svars and svars.IdleCleanupDays or 0
+    if not idleDays or idleDays <= 0 then return end
+
+    local d = ModData.getOrCreate(RVM.POS_DATA_KEY)
+    if not d.relationships then return end
+
+    -- Collect candidates first to avoid modifying the table while iterating.
+    local toClean = {}
+    for rvId, rel in pairs(d.relationships) do
+        local refDate = rel.lastEnterDate or rel.dateLinked
+        local days    = daysSince(refDate)
+        if days and days >= idleDays then
+            table.insert(toClean, { rvId = rvId, rel = rel, days = days })
+        end
+    end
+
+    if #toClean == 0 then return end
+
+    local now = os.date("%d/%m/%Y %H:%M")
+    local header = string.format(
+        "[%s] [RVM] IdleCleaner: running — threshold=%d day(s), candidates=%d",
+        now, idleDays, #toClean)
+    print(header)
+    writeIdleLog(header)
+
+    for _, item in ipairs(toClean) do
+        local rel = item.rel
+        local logMsg = string.format(
+            "[%s] [RVM] IdleCleaner: DISSOCIATED rvId=%s name=%s type=%s"
+            .. " room=%.0f,%.0f,%.0f vehPos=%s"
+            .. " lastEnter=%s linked=%s idleDays=%d",
+            now,
+            tostring(item.rvId),
+            tostring(rel.vehicleName  or "-"),
+            tostring(rel.typeKey      or "-"),
+            rel.room and rel.room.x or 0,
+            rel.room and rel.room.y or 0,
+            rel.room and rel.room.z or 0,
+            rel.lastPos and string.format("%.0f,%.0f", rel.lastPos.x, rel.lastPos.y) or "-",
+            tostring(rel.lastEnterDate or "-"),
+            tostring(rel.dateLinked    or "-"),
+            item.days)
+        print(logMsg)
+        writeIdleLog(logMsg)
+        RVMServer.dissociate(item.rvId)
+    end
+
+    local footer = string.format(
+        "[%s] [RVM] IdleCleaner: done — dissociated=%d", now, #toClean)
+    print(footer)
+    writeIdleLog(footer)
+end
+
+-- ============================================================
 -- OnTick handler
 -- ============================================================
 local function onTick()
-    tickCount = tickCount + 1
+    tickCount     = tickCount     + 1
+    idleTickCount = idleTickCount + 1
 
     if tickCount % CHECK_TICKS == 0 then
         checkPositions()
@@ -125,6 +217,11 @@ local function onTick()
     if tickCount % FLUSH_TICKS == 0 then
         flushDirty()
         tickCount = 0
+    end
+
+    if idleTickCount >= IDLE_CHECK_TICKS then
+        checkIdleRooms()
+        idleTickCount = 0
     end
 end
 
@@ -155,6 +252,23 @@ local function bootstrap()
 
     d.relationships = rels
 
+    -- Stamp dateLinked for any pre-existing entry that still has no date.
+    -- This happens on mid-save installs: the base mod has assignments, but
+    -- our mod has never seen them before.  Using server-start time as the
+    -- reference ensures the idle-cleanup feature has a baseline for every
+    -- vehicle from the moment this mod is first loaded.
+    local now = os.date("%d/%m/%Y %H:%M")
+    local stamped = 0
+    for _, rel in pairs(rels) do
+        if not rel.dateLinked then
+            rel.dateLinked = now
+            stamped = stamped + 1
+        end
+    end
+    if stamped > 0 then
+        print("[RVM] bootstrap: stamped dateLinked=" .. now .. " for " .. stamped .. " pre-existing assignment(s)")
+    end
+
     -- Prime the position cache so the first check has a baseline.
     local base     = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
     local vehicles = base.Vehicles or {}
@@ -172,10 +286,36 @@ local function bootstrap()
         .. " posCache=" .. cached)
 
     Events.OnTick.Add(onTick)
+
+    -- Run idle cleanup once on world load (in addition to the periodic hourly check).
+    checkIdleRooms()
+
     print("[RVM] bootstrap: done")
 end
 
-Events.OnInitWorld.Add(bootstrap)
+-- ModData is not available at OnInitWorld — the save data is loaded
+-- after the world is initialised.  Poll each tick until the base mod's
+-- AssignedRooms key exists (or 300 ticks have passed as a safety net),
+-- then run bootstrap once and remove this listener.
+local bootstrapWaitTicks = 0
+local function waitForModData()
+    bootstrapWaitTicks = bootstrapWaitTicks + 1
+    local base     = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+    local hasData  = base.AssignedRooms ~= nil
+    local timedOut = bootstrapWaitTicks >= 300   -- ~5 s safety net
+
+    if hasData or timedOut then
+        Events.OnTick.Remove(waitForModData)
+        if timedOut and not hasData then
+            print("[RVM] bootstrap: ModData not available after 300 ticks — running anyway (fresh save?)")
+        end
+        bootstrap()
+    end
+end
+
+Events.OnInitWorld.Add(function()
+    Events.OnTick.Add(waitForModData)
+end)
 
 -- ============================================================
 -- buildNameMap()
@@ -245,7 +385,7 @@ local function onClientCommand(module, command, player, data)
     local function rebuild()
         local d = ModData.getOrCreate(RVM.POS_DATA_KEY)
 
-        -- Preserve dates before wiping relationships.
+        -- Preserve dates and cross-type marker before wiping relationships.
         local savedDates = {}
         if d.relationships then
             for rvId, rel in pairs(d.relationships) do
@@ -260,7 +400,7 @@ local function onClientCommand(module, command, player, data)
 
         d.relationships = buildRelationships()
 
-        -- Restore preserved dates and cached vehicle names.
+        -- Restore preserved dates and vehicle names.
         for rvId, dates in pairs(savedDates) do
             if d.relationships[rvId] then
                 d.relationships[rvId].dateLinked    = dates.dateLinked
@@ -418,6 +558,13 @@ local function onAdminCommand(module, command, player, data)
         sendServerCommand(player, RVM.MODULE, "associateResult",
             { ok = room ~= nil, err = err, rvVehicleUniqueId = rvId,
               typeKey = typeKey, room = room })
+
+    elseif command == "forceIdleCheck" then
+        local lvl = string.lower(player:getAccessLevel() or "")
+        if lvl ~= "admin" and lvl ~= "moderator" then return end
+        print("[RVM] forceIdleCheck requested by " .. player:getUsername())
+        checkIdleRooms()
+        sendServerCommand(player, RVM.MODULE, "idleCheckResult", { ok = true })
     end
 end
 
@@ -449,8 +596,10 @@ function RVMServer.dissociate(rvVehicleUniqueId)  ---@param rvVehicleUniqueId st
     local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
     local assigned = base[rel.dataKey]
     if assigned then
-        assigned[rvId]    = nil
-        assigned[rvVehicleUniqueId] = nil   -- cover numeric key variant
+        local numRvId = tonumber(rvId)
+        assigned[rvId]              = nil
+        assigned[rvVehicleUniqueId] = nil   -- cover original value (may be numeric)
+        if numRvId then assigned[numRvId] = nil end
     end
 
     -- Remove from base mod's vehicle-position table.
@@ -504,9 +653,7 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos, vehicl
 
     base[dataKey] = base[dataKey] or {}
 
-    -- Normalise: the base mod may have stored the assignment under a numeric key
-    -- (e.g. base.AssignedRooms[12345]) while we always use string keys ("12345").
-    -- Move it to the string key so subsequent reads are consistent.
+    -- Normalise: the base mod may have stored the assignment under a numeric key.
     local numId = tonumber(rvId)
     if numId and base[dataKey][numId] and not base[dataKey][rvId] then
         base[dataKey][rvId]  = base[dataKey][numId]
@@ -518,7 +665,7 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos, vehicl
         return nil, "vehicle " .. rvId .. " already has a room assigned"
     end
 
-    -- Find a free room slot (same algorithm as the base mod).
+    -- Build occupied set.
     local occupied = {}
     for _, roomCoords in pairs(base[dataKey]) do
         local k = string.format("%d-%d-%d",
@@ -553,12 +700,58 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos, vehicl
     end
 
     -- Write into the base mod's ModData.
-    base[dataKey][rvId] = { x = room.x, y = room.y, z = room.z }
+    -- Store under both string and numeric key so the base mod finds it regardless
+    -- of which key format it uses internally.
+    local coords = { x = room.x, y = room.y, z = room.z }
+    base[dataKey][rvId] = coords
+    local numRvId = tonumber(rvId)
+    if numRvId then base[dataKey][numRvId] = coords end
+
+    -- Force-set projectRV_uniqueId on the server-side vehicle ModData.
+    -- In MP, the client sets this value and queues it for transmission, but there
+    -- is no guarantee it has arrived by the time the player tries to enter the RV.
+    -- The base mod's GetInToRV calls ensureVehiclePersistentId() which generates
+    -- a *new* random id if it finds nil — causing a different key to be used for
+    -- the ModData lookup, so the assigned room is never found.
+    -- Scanning by position + type scripts is the only reliable way to reach the
+    -- vehicle object server-side from a client command handler.
+    if vehicleWorldPos then
+        local okCell, cell = pcall(getCell)
+        if okCell and cell then
+            local okVeh, cellVehicles = pcall(function() return cell:getVehicles() end)
+            if okVeh and cellVehicles then
+                for i = 0, cellVehicles:size() - 1 do
+                    local v = cellVehicles:get(i)
+                    if v then
+                        local dx = math.abs((v:getX() or 0) - (vehicleWorldPos.x or 0))
+                        local dy = math.abs((v:getY() or 0) - (vehicleWorldPos.y or 0))
+                        if dx <= 2 and dy <= 2 then
+                            local vScript = tostring(v:getScript() and v:getScript():getFullName() or "")
+                            local matched = false
+                            if typeDef.scripts then
+                                for _, s in ipairs(typeDef.scripts) do
+                                    if s == vScript then matched = true; break end
+                                end
+                            else
+                                matched = true  -- no scripts list: trust position alone
+                            end
+                            if matched then
+                                v:getModData().projectRV_uniqueId = rvId
+                                print("[RVM] associate: set projectRV_uniqueId=" .. rvId
+                                    .. " on server vehicle " .. vScript)
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 
     -- Store the vehicle's world position so exitRV can teleport it back.
     if vehicleWorldPos then
-        base.Vehicles        = base.Vehicles or {}
-        base.Vehicles[rvId]  = {
+        base.Vehicles       = base.Vehicles or {}
+        base.Vehicles[rvId] = {
             x = vehicleWorldPos.x or 0,
             y = vehicleWorldPos.y or 0,
             z = vehicleWorldPos.z or 0,
