@@ -132,6 +132,32 @@ local RP_PAD      = 8
 local RP_HDR      = 22
 local RP_FILTER_H = 30   -- height of the filter/search row
 
+-- ============================================================
+-- Theme (shared with Room Picker)
+-- ============================================================
+local T = {
+    bg      = { r=0.06, g=0.06, b=0.08, a=0.96 },
+    border  = { r=0.30, g=0.31, b=0.35, a=1.00 },
+    hdrBg   = { r=0.12, g=0.12, b=0.16 },
+    divider = { r=0.26, g=0.27, b=0.31 },
+    text    = { r=0.92, g=0.92, b=0.94 },
+    muted   = { r=0.65, g=0.65, b=0.70 },
+    accent  = { r=0.80, g=0.35, b=0.30 },
+    rowA    = { r=0.08, g=0.08, b=0.10 },
+    rowB    = { r=0.10, g=0.10, b=0.13 },
+    rowSel  = { r=0.20, g=0.26, b=0.32 },
+    btnDef  = { r=0.25, g=0.25, b=0.30 },
+    btnOk   = { r=0.25, g=0.55, b=0.35 },
+    btnDang = { r=0.65, g=0.25, b=0.25 },
+}
+
+local function styleBtn(btn, c)
+    btn.backgroundColor          = { r=c.r, g=c.g, b=c.b, a=1 }
+    btn.backgroundColorMouseOver = { r=math.min(c.r+0.12,1), g=math.min(c.g+0.12,1), b=math.min(c.b+0.12,1), a=1 }
+    btn.borderColor              = { r=math.min(c.r+0.20,1), g=math.min(c.g+0.20,1), b=math.min(c.b+0.20,1), a=0.80 }
+    btn.textColor                = { r=T.text.r, g=T.text.g, b=T.text.b, a=1 }
+end
+
 function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
     local sw  = getCore():getScreenWidth()
     local sh  = getCore():getScreenHeight()
@@ -140,8 +166,8 @@ function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
         math.floor((sh - RP_H) / 2),
         RP_W, RP_H)
 
-    o.backgroundColor = { r = 0.08, g = 0.08, b = 0.11, a = 0.97 }
-    o.borderColor     = { r = 0.35, g = 0.35, b = 0.50, a = 1.00 }
+    o.backgroundColor = T.bg
+    o.borderColor     = T.border
     o.moveWithMouse   = true
 
     o.typeKey           = typeKey
@@ -158,6 +184,11 @@ function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
     return o
 end
 
+function RVMRoomPicker:prerender()
+    self:drawRect(2, 2, self.width, self.height, 0.35, 0, 0, 0)
+    ISPanel.prerender(self)
+end
+
 function RVMRoomPicker:initialise()
     ISPanel.initialise(self)
 
@@ -165,7 +196,7 @@ function RVMRoomPicker:initialise()
     local close = ISButton:new(self.width - 22, 4, 18, 20,
         getText("IGUI_RVM_Close"), self, RVMRoomPicker.onClose)
     close:initialise()
-    close.backgroundColor = { r = 0.50, g = 0.10, b = 0.10, a = 1 }
+    styleBtn(close, T.btnDang)
     self:addChild(close)
 
     -- Filter row: region dropdown + location search entry
@@ -204,7 +235,7 @@ function RVMRoomPicker:initialise()
         self.width - RP_PAD * 2, 26,
         getText("IGUI_RVM_Picker_Confirm"), self, RVMRoomPicker.onConfirm)
     self.btnConfirm:initialise()
-    self.btnConfirm.backgroundColor = { r = 0.10, g = 0.28, b = 0.10, a = 1 }
+    styleBtn(self.btnConfirm, T.btnOk)
     self:addChild(self.btnConfirm)
 
     self:updateConfirm()
@@ -296,21 +327,22 @@ function RVMRoomPicker:render()
         or  ("(" .. #filtered .. " / " .. #self.freeRooms .. " free)")
     self:drawText(
         getText("IGUI_RVM_Picker_Title") .. " - " .. (self.typeKey or "") .. sizeStr .. "  " .. countStr,
-        x, y, 1, 1, 0.6, 1, UIFont.Small)
+        x, y, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
     y = y + RP_HDR
 
     -- Filter row background (child widgets draw on top)
-    self:drawRect(x, y, self.width - RP_PAD * 2, RP_FILTER_H,
-        1, 0.10, 0.10, 0.14)
+    self:drawRect(x, y, self.width - RP_PAD * 2, RP_FILTER_H, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
     y = y + RP_FILTER_H
 
     -- Column headers
-    self:drawRect(x, y, self.width - RP_PAD * 2, RP_HDR, 1, 0.12, 0.12, 0.18)
-    self:drawText(getText("IGUI_RVM_Picker_Col_Num"),    x + 2,   y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText(getText("IGUI_RVM_Picker_Col_Region"), x + 38,  y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText("X",                                   x + 118, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText("Y",                                   x + 198, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
-    self:drawText("Z",                                   x + 278, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    self:drawRect(x, y, self.width - RP_PAD * 2, RP_HDR, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
+    self:drawRect(x, y + RP_HDR - 1, self.width - RP_PAD * 2, 1, 1, T.divider.r, T.divider.g, T.divider.b)
+    self:drawRect(x, y, 4, RP_HDR, 1, T.accent.r, T.accent.g, T.accent.b)
+    self:drawText(getText("IGUI_RVM_Picker_Col_Num"),    x + 2,   y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText(getText("IGUI_RVM_Picker_Col_Region"), x + 38,  y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText("X",                                   x + 118, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText("Y",                                   x + 198, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText("Z",                                   x + 278, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
     y = y + RP_HDR
 
     self.listY = y
@@ -323,22 +355,16 @@ function RVMRoomPicker:render()
     for idx, room in ipairs(filtered) do
         if rowY + RP_ROW > y and rowY < y + self.listH then
             local selected = (room.index == self.selectedRoomIndex)
-            local bg
-            if selected then
-                bg = { 1, 0.18, 0.30, 0.42 }
-            elseif idx % 2 == 0 then
-                bg = { 1, 0.10, 0.10, 0.13 }
-            else
-                bg = { 1, 0.13, 0.13, 0.16 }
-            end
-            self:drawRect(x, rowY,
-                self.width - RP_PAD * 2, RP_ROW, bg[1], bg[2], bg[3], bg[4])
+            local bg = selected and T.rowSel or (idx % 2 == 0 and T.rowA or T.rowB)
+            self:drawRect(x, rowY, self.width - RP_PAD * 2, RP_ROW, 1, bg.r, bg.g, bg.b)
+            -- row divider
+            self:drawRect(x, rowY + RP_ROW - 1, self.width - RP_PAD * 2, 1, 0.5, T.divider.r, T.divider.g, T.divider.b)
             local region = getRoomRegion(room.x)
-            self:drawText(tostring(room.index), x + 2,   rowY + 2, 0.85, 0.85, 0.85, 1, UIFont.Small)
-            self:drawText(region,               x + 38,  rowY + 2, 0.65, 0.75, 0.65, 1, UIFont.Small)
-            self:drawText(tostring(room.x),     x + 118, rowY + 2, 0.85, 0.85, 0.85, 1, UIFont.Small)
-            self:drawText(tostring(room.y),     x + 198, rowY + 2, 0.85, 0.85, 0.85, 1, UIFont.Small)
-            self:drawText(tostring(room.z),     x + 278, rowY + 2, 0.85, 0.85, 0.85, 1, UIFont.Small)
+            self:drawText(tostring(room.index), x + 2,   rowY + 2, T.muted.r, T.muted.g, T.muted.b, 1, UIFont.Small)
+            self:drawText(region,               x + 38,  rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(tostring(room.x),     x + 118, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(tostring(room.y),     x + 198, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(tostring(room.z),     x + 278, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
         end
         rowY = rowY + RP_ROW
     end
@@ -351,8 +377,7 @@ function RVMRoomPicker:render()
         local barH  = math.max(16, self.listH * self.listH / totalH)
         local ratio = self.scrollY / math.max(1, totalH - self.listH)
         local barY  = self.listY + ratio * (self.listH - barH)
-        self:drawRect(self.width - RP_PAD - 4, barY, 4, barH,
-            0.7, 0.5, 0.5, 0.6)
+        self:drawRect(self.width - RP_PAD - 4, barY, 4, barH, 0.8, T.accent.r, T.accent.g, T.accent.b)
     end
 end
 

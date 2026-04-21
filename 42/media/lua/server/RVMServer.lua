@@ -330,8 +330,9 @@ local function buildNameMap()
     local ok2, vehicles = pcall(function() return cell:getVehicles() end)
     if not ok2 or not vehicles then return names end
 
-    for i = 0, vehicles:size() - 1 do
-        local v = vehicles:get(i)
+    local iter = vehicles:iterator()
+    while iter:hasNext() do
+        local v = iter:next()
         if v then
             local uid = v:getModData().projectRV_uniqueId
             if uid then
@@ -720,8 +721,9 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos, vehicl
         if okCell and cell then
             local okVeh, cellVehicles = pcall(function() return cell:getVehicles() end)
             if okVeh and cellVehicles then
-                for i = 0, cellVehicles:size() - 1 do
-                    local v = cellVehicles:get(i)
+                local vIter = cellVehicles:iterator()
+                while vIter:hasNext() do
+                    local v = vIter:next()
                     if v then
                         local dx = math.abs((v:getX() or 0) - (vehicleWorldPos.x or 0))
                         local dy = math.abs((v:getY() or 0) - (vehicleWorldPos.y or 0))

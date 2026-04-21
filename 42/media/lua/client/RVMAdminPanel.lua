@@ -30,6 +30,34 @@ local ACOL_FIXED_TOTAL = 0
 for _, w in ipairs(ACOL_FIXED) do ACOL_FIXED_TOTAL = ACOL_FIXED_TOTAL + w end
 
 -- ============================================================
+-- Theme
+-- ============================================================
+local T = {
+    bg      = { r=0.06, g=0.06, b=0.08, a=0.96 },
+    border  = { r=0.30, g=0.31, b=0.35, a=1.00 },
+    hdrBg   = { r=0.12, g=0.12, b=0.16 },
+    divider = { r=0.26, g=0.27, b=0.31 },
+    text    = { r=0.92, g=0.92, b=0.94 },
+    muted   = { r=0.65, g=0.65, b=0.70 },
+    accent  = { r=0.80, g=0.35, b=0.30 },
+    rowA    = { r=0.08, g=0.08, b=0.10 },
+    rowB    = { r=0.10, g=0.10, b=0.13 },
+    rowSel  = { r=0.20, g=0.26, b=0.32 },
+    btnDef  = { r=0.25, g=0.25, b=0.30 },
+    btnPrim = { r=0.28, g=0.45, b=0.70 },
+    btnOk   = { r=0.25, g=0.55, b=0.35 },
+    btnDang = { r=0.65, g=0.25, b=0.25 },
+    btnWarn = { r=0.50, g=0.45, b=0.10 },
+}
+
+local function styleBtn(btn, c)
+    btn.backgroundColor          = { r=c.r, g=c.g, b=c.b, a=1 }
+    btn.backgroundColorMouseOver = { r=math.min(c.r+0.12,1), g=math.min(c.g+0.12,1), b=math.min(c.b+0.12,1), a=1 }
+    btn.borderColor              = { r=math.min(c.r+0.20,1), g=math.min(c.g+0.20,1), b=math.min(c.b+0.20,1), a=0.80 }
+    btn.textColor                = { r=T.text.r, g=T.text.g, b=T.text.b, a=1 }
+end
+
+-- ============================================================
 -- Text truncation helper
 -- ============================================================
 local function trimText(font, txt, maxW)
@@ -49,8 +77,8 @@ end
 -- ============================================================
 function RVManagerPanel:new(x, y, w, h)
     local o = ISPanel.new(self, x, y, w, h)
-    o.backgroundColor = { r = 0.08, g = 0.08, b = 0.10, a = 0.96 }
-    o.borderColor     = { r = 0.35, g = 0.35, b = 0.42, a = 1.00 }
+    o.backgroundColor = T.bg
+    o.borderColor     = T.border
     o.moveWithMouse   = true
 
     o.loading        = false
@@ -82,6 +110,11 @@ function RVManagerPanel:new(x, y, w, h)
     return o
 end
 
+function RVManagerPanel:prerender()
+    self:drawRect(2, 2, self.width, self.height, 0.35, 0, 0, 0)
+    ISPanel.prerender(self)
+end
+
 function RVManagerPanel:initialise()
     ISPanel.initialise(self)
 
@@ -89,14 +122,14 @@ function RVManagerPanel:initialise()
     local close = ISButton:new(self.width - 22, 4, 18, 20,
         getText("IGUI_RVM_Close"), self, RVManagerPanel.onClose)
     close:initialise()
-    close.backgroundColor = { r = 0.50, g = 0.10, b = 0.10, a = 1 }
+    styleBtn(close, T.btnDang)
     self:addChild(close)
 
     -- Refresh button
     local refresh = ISButton:new(self.width - 96, 4, 70, 20,
         getText("IGUI_RVM_Refresh"), self, RVManagerPanel.requestData)
     refresh:initialise()
-    refresh.backgroundColor = { r = 0.15, g = 0.28, b = 0.15, a = 1 }
+    styleBtn(refresh, T.btnPrim)
     self:addChild(refresh)
 
     -- Bottom action buttons
@@ -105,23 +138,25 @@ function RVManagerPanel:initialise()
     self.btnTpVeh = ISButton:new(PAD, by, BTN_W, BTN_H,
         getText("IGUI_RVM_Btn_TpVehicle"), self, RVManagerPanel.teleportToVehicle)
     self.btnTpVeh:initialise()
+    styleBtn(self.btnTpVeh, T.btnDef)
     self:addChild(self.btnTpVeh)
 
     self.btnTpRoom = ISButton:new(PAD + BTN_W + PAD, by, BTN_W, BTN_H,
         getText("IGUI_RVM_Btn_TpRoom"), self, RVManagerPanel.teleportToRoom)
     self.btnTpRoom:initialise()
+    styleBtn(self.btnTpRoom, T.btnDef)
     self:addChild(self.btnTpRoom)
 
     self.btnDissoc = ISButton:new(PAD + (BTN_W + PAD) * 2, by, BTN_W, BTN_H,
         getText("IGUI_RVM_Btn_Dissociate"), self, RVManagerPanel.dissociate)
     self.btnDissoc:initialise()
-    self.btnDissoc.backgroundColor = { r = 0.40, g = 0.10, b = 0.10, a = 1 }
+    styleBtn(self.btnDissoc, T.btnDang)
     self:addChild(self.btnDissoc)
 
     self.btnForceIdle = ISButton:new(PAD + (BTN_W + PAD) * 3, by, BTN_W, BTN_H,
         getText("IGUI_RVM_Btn_ForceIdle"), self, RVManagerPanel.forceIdleCleanup)
     self.btnForceIdle:initialise()
-    self.btnForceIdle.backgroundColor = { r = 0.18, g = 0.18, b = 0.08, a = 1 }
+    styleBtn(self.btnForceIdle, T.btnWarn)
     self:addChild(self.btnForceIdle)
 
     -- Filter row: label + combo (field selector) + text entry (search term)
@@ -221,7 +256,7 @@ function RVManagerPanel:render()
     local y = PAD
 
     -- Title
-    self:drawText(getText("IGUI_RVM_PanelTitle"), x, y, 1, 1, 1, 1, UIFont.Medium)
+    self:drawText(getText("IGUI_RVM_PanelTitle"), x, y, T.text.r, T.text.g, T.text.b, 1, UIFont.Medium)
     y = y + TITLE_H
 
     if self.loading then
@@ -244,13 +279,13 @@ function RVManagerPanel:render()
 
     -- Divider
     y = y + PAD
-    self:drawRect(x, y, self.width - PAD * 2, 1, 0.9, 0.3, 0.3, 0.35)
+    self:drawRect(x, y, self.width - PAD * 2, 1, 1, T.divider.r, T.divider.g, T.divider.b)
     y = y + PAD
 
     -- Filter bar — repositioned below summary (child widgets drawn on top)
     if self.filterCombo then self.filterCombo:setY(y) end
     if self.filterEntry then self.filterEntry:setY(y) end
-    self:drawText(getText("IGUI_RVM_FilterLabel"), x, y + 6, 0.75, 0.75, 0.45, 1, UIFont.Small)
+    self:drawText(getText("IGUI_RVM_FilterLabel"), x, y + 6, T.muted.r, T.muted.g, T.muted.b, 1, UIFont.Small)
     y = y + FILTER_H + PAD
 
     -- Assignment table (fills remaining space above buttons)
@@ -267,9 +302,9 @@ function RVManagerPanel:render()
         local th   = tm:getFontHeight(font) + 6
         local tx   = math.min(mx + 14, self.width - tw - PAD)
         local ty   = math.max(my - th - 4, 0)
-        self:drawRect(tx, ty, tw, th, 0.95, 0.08, 0.08, 0.12)
-        self:drawRectBorder(tx, ty, tw, th, 0.9, 0.45, 0.45, 0.55)
-        self:drawText(tip, tx + 5, ty + 3, 1, 1, 0.85, 1, font)
+        self:drawRect(tx, ty, tw, th, 0.97, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
+        self:drawRectBorder(tx, ty, tw, th, 0.90, T.border.r, T.border.g, T.border.b)
+        self:drawText(tip, tx + 5, ty + 3, T.text.r, T.text.g, T.text.b, 1, font)
     end
 end
 
@@ -285,10 +320,15 @@ function RVManagerPanel:renderSummary(x, y)
     self.summaryHdrY = y
     self.scolX = {}
     local tm = getTextManager()
+    -- Full-width header background + bottom divider
+    self:drawRect(x, y, self.width - PAD * 2, HDR_H, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
+    self:drawRect(x, y + HDR_H - 1, self.width - PAD * 2, 1, 1, T.divider.r, T.divider.g, T.divider.b)
+    -- Left accent bar
+    self:drawRect(x, y, 4, HDR_H, 1, T.accent.r, T.accent.g, T.accent.b)
+
     local cx = x
     for i, h in ipairs(hdrs) do
         self.scolX[i] = cx
-        self:drawRect(cx, y, SCOL[i] - 1, HDR_H, 1, 0.14, 0.14, 0.18)
         -- Sort indicator on right edge of header
         local ind, ir, ig, ib
         if self.summarySortCol == i then
@@ -296,10 +336,10 @@ function RVManagerPanel:renderSummary(x, y)
             ir, ig, ib = 1.0, 0.85, 0.2
         else
             ind = "^v"
-            ir, ig, ib = 0.35, 0.35, 0.35
+            ir, ig, ib = T.muted.r, T.muted.g, T.muted.b
         end
         local indW = tm:MeasureStringX(UIFont.Small, ind) + 2
-        self:drawText(trimText(UIFont.Small, h, SCOL[i] - indW - 6), cx + 2, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+        self:drawText(trimText(UIFont.Small, h, SCOL[i] - indW - 6), cx + 2, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
         self:drawText(ind, cx + SCOL[i] - indW - 1, y + 2, ir, ig, ib, 1, UIFont.Small)
         cx = cx + SCOL[i]
     end
@@ -346,21 +386,21 @@ function RVManagerPanel:renderSummary(x, y)
     self:setStencilRect(0, y, self.width, clampH)
 
     local rowY = y - self.summaryScrollY
+    -- Column text colors: type=text, size=muted, total/occ/free=text
     local clr = {
-        { 0.90, 0.90, 0.90 },
-        { 0.70, 0.85, 0.70 },
-        { 0.65, 0.65, 0.90 },
-        { 0.90, 0.50, 0.50 },
-        { 0.50, 0.90, 0.50 },
+        T.text,
+        T.muted,
+        T.text,
+        { r=0.90, g=0.50, b=0.50 },
+        { r=0.50, g=0.85, b=0.50 },
     }
 
     for idx, typeKey in ipairs(types) do
         if rowY + ROW_H > y and rowY < y + clampH then
-            local bg = (idx % 2 == 0)
-                and { 1, 0.10, 0.10, 0.13 }
-                or  { 1, 0.13, 0.13, 0.16 }
-            self:drawRect(x, rowY, self.width - PAD * 2, ROW_H,
-                bg[1], bg[2], bg[3], bg[4])
+            local bg = (idx % 2 == 0) and T.rowA or T.rowB
+            self:drawRect(x, rowY, self.width - PAD * 2, ROW_H, 1, bg.r, bg.g, bg.b)
+            -- row divider
+            self:drawRect(x, rowY + ROW_H - 1, self.width - PAD * 2, 1, 0.5, T.divider.r, T.divider.g, T.divider.b)
 
             local s       = self.data.summary[typeKey]
             local sizeStr = (s.roomW and s.roomH) and (s.roomW .. "x" .. s.roomH) or "-"
@@ -369,7 +409,7 @@ function RVManagerPanel:renderSummary(x, y)
             for i, val in ipairs(row) do
                 local c   = clr[i]
                 local str = trimText(UIFont.Small, val, SCOL[i] - 4)
-                self:drawText(str, cx + 2, rowY + 1, c[1], c[2], c[3], 1, UIFont.Small)
+                self:drawText(str, cx + 2, rowY + 1, c.r, c.g, c.b, 1, UIFont.Small)
                 cx = cx + SCOL[i]
             end
         end
@@ -382,7 +422,7 @@ function RVManagerPanel:renderSummary(x, y)
         local barH  = math.max(12, clampH * clampH / totalH)
         local ratio = maxScroll > 0 and self.summaryScrollY / maxScroll or 0
         local barY  = y + ratio * (clampH - barH)
-        self:drawRect(self.width - PAD - 4, barY, 4, barH, 0.7, 0.5, 0.5, 0.6)
+        self:drawRect(self.width - PAD - 4, barY, 4, barH, 0.8, T.accent.r, T.accent.g, T.accent.b)
     end
 
     return y + clampH
@@ -412,11 +452,16 @@ function RVManagerPanel:renderAssignments(x, y)
     self.acolX      = {}
     self.assignHdrY = y
 
+    -- Full-width header background + bottom divider
+    self:drawRect(x, y, self.width - PAD * 2, HDR_H, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
+    self:drawRect(x, y + HDR_H - 1, self.width - PAD * 2, 1, 1, T.divider.r, T.divider.g, T.divider.b)
+    -- Left accent bar
+    self:drawRect(x, y, 4, HDR_H, 1, T.accent.r, T.accent.g, T.accent.b)
+
     local tm = getTextManager()
     local cx = x
     for i, hdr in ipairs(ahdr) do
         self.acolX[i] = cx
-        self:drawRect(cx, y, acol[i] - 1, HDR_H, 1, 0.14, 0.14, 0.18)
         -- Sort indicator on right edge: dim "^v" on all; bright "^"/"v" on active
         local ind, ir, ig, ib
         if self.sortCol == i then
@@ -424,10 +469,10 @@ function RVManagerPanel:renderAssignments(x, y)
             ir, ig, ib = 1.0, 0.85, 0.2
         else
             ind = "^v"
-            ir, ig, ib = 0.35, 0.35, 0.35
+            ir, ig, ib = T.muted.r, T.muted.g, T.muted.b
         end
         local indW = tm:MeasureStringX(UIFont.Small, ind) + 2
-        self:drawText(trimText(UIFont.Small, hdr, acol[i] - indW - 6), cx + 2, y + 2, 0.75, 0.75, 0.45, 1, UIFont.Small)
+        self:drawText(trimText(UIFont.Small, hdr, acol[i] - indW - 6), cx + 2, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
         self:drawText(ind, cx + acol[i] - indW - 1, y + 2, ir, ig, ib, 1, UIFont.Small)
         cx = cx + acol[i]
     end
@@ -454,16 +499,10 @@ function RVManagerPanel:renderAssignments(x, y)
     for idx, a in ipairs(assignments) do
         if rowY + ROW_H > y and rowY < y + contentH then
             local selected = tostring(a.rvVehicleUniqueId) == self.selectedRvId
-            local bg
-            if selected then
-                bg = { a=1, r=0.18, g=0.30, b=0.42 }
-            elseif idx % 2 == 0 then
-                bg = { a=1, r=0.10, g=0.10, b=0.13 }
-            else
-                bg = { a=1, r=0.13, g=0.13, b=0.16 }
-            end
-            self:drawRect(x, rowY, self.width - PAD * 2, ROW_H,
-                bg.a, bg.r, bg.g, bg.b)
+            local bg = selected and T.rowSel or (idx % 2 == 0 and T.rowA or T.rowB)
+            self:drawRect(x, rowY, self.width - PAD * 2, ROW_H, 1, bg.r, bg.g, bg.b)
+            -- row divider
+            self:drawRect(x, rowY + ROW_H - 1, self.width - PAD * 2, 1, 0.5, T.divider.r, T.divider.g, T.divider.b)
 
             local cols = {
                 fmt(a.rvVehicleUniqueId),
@@ -479,7 +518,7 @@ function RVManagerPanel:renderAssignments(x, y)
             cx = x
             for i, val in ipairs(cols) do
                 local str = trimText(UIFont.Small, val, acol[i] - 4)
-                self:drawText(str, cx + 2, rowY + 2, 0.85, 0.85, 0.85, 1, UIFont.Small)
+                self:drawText(str, cx + 2, rowY + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
                 cx = cx + acol[i]
             end
         end
@@ -494,7 +533,7 @@ function RVManagerPanel:renderAssignments(x, y)
         local ratio = (totalH - contentH > 0)
             and self.scrollY / (totalH - contentH) or 0
         local barY  = y + ratio * (contentH - barH)
-        self:drawRect(self.width - PAD - 4, barY, 4, barH, 0.7, 0.5, 0.5, 0.6)
+        self:drawRect(self.width - PAD - 4, barY, 4, barH, 0.8, T.accent.r, T.accent.g, T.accent.b)
     end
 end
 
