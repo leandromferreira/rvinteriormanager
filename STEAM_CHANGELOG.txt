@@ -2,6 +2,17 @@
 
 [hr][/hr]
 
+[h2]v0.3 — 2026-04-20[/h2]
+
+[h3]Changes[/h3]
+[list]
+[*][b]Refreshed UI theme[/b] — admin panel and room picker now use a consistent dark theme matching the style of other quality mods: deeper backgrounds, a red accent bar on table headers, subtle row dividers, and a unified color palette for all buttons (primary, danger, warning).
+
+[*][b]B42.17 compatibility[/b] — [i]cell:getVehicles()[/i] returns a [i]Set[/i] in B42.17 instead of an [i]ArrayList[/i], making indexed access ([i]:get(i)[/i]) crash. Both vehicle iteration loops now use the Java [i]iterator()[/i] / [i]hasNext()[/i] / [i]next()[/i] pattern, which works on both builds.
+[/list]
+
+[hr][/hr]
+
 [h2]v0.2 — 2026-04-15[/h2]
 
 [h3]New Features[/h3]
