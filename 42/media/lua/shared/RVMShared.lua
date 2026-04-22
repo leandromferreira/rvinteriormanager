@@ -27,8 +27,9 @@ local function buildRvUniqueIdToEngineId()
     local ok2, vehicles = pcall(function() return cell:getVehicles() end)
     if not ok2 or not vehicles then return lookup end
 
-    for i = 0, vehicles:size() - 1 do
-        local v = vehicles:get(i)
+    local iter = vehicles:iterator()
+    while iter:hasNext() do
+        local v = iter:next()
         if v then
             local uid = v:getModData().projectRV_uniqueId
             if uid then

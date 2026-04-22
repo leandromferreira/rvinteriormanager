@@ -118,15 +118,11 @@ end
 -- ============================================================
 -- Idle room cleaner
 -- ============================================================
--- Appends msg to the idle-cleanup log file.
--- Uses PZ's getFileWriter API (resolves paths relative to ~/Zomboid/).
--- os.getenv and io are not available in PZ's server-side Kahlua VM.
-local function writeIdleLog(msg)
-    local f = getFileWriter("Logs/RVM_IdleCleanup.log", true, false)
-    if f then
-        f:write(msg .. "\n")
-        f:close()
-    end
+-- Appends msg to ~/Zomboid/lua/RVM/RVM_dissociate.log.
+-- getFileWriter resolves paths relative to ~/Zomboid/ and creates subdirs as needed.
+local function writeRvmLog(msg)
+    local f = getFileWriter("RVM/RVM_dissociate.log", true, false)
+    if f then f:write(msg .. "\n"); f:close() end
 end
 
 -- Parses "DD/MM/YYYY HH:MM" → os.time value, or nil.
@@ -173,34 +169,33 @@ local function checkIdleRooms()
         "[%s] [RVM] IdleCleaner: running — threshold=%d day(s), candidates=%d",
         now, idleDays, #toClean)
     print(header)
-    writeIdleLog(header)
+    writeRvmLog(header)
 
     for _, item in ipairs(toClean) do
-        local rel = item.rel
-        local logMsg = string.format(
-            "[%s] [RVM] IdleCleaner: DISSOCIATED rvId=%s name=%s type=%s"
-            .. " room=%.0f,%.0f,%.0f vehPos=%s"
-            .. " lastEnter=%s linked=%s idleDays=%d",
+        local rel     = item.rel
+        local room    = rel.room
+        local roomStr = room and string.format("%d,%d,%d", room.x or 0, room.y or 0, room.z or 0) or "?"
+        local vpos    = rel.lastPos
+        local vposStr = vpos and string.format("%.0f,%.0f,%.0f", vpos.x or 0, vpos.y or 0, vpos.z or 0) or "?"
+        local msg = string.format(
+            "[%s] [RVM] DISSOCIATE  trigger=idle  rvId=%s  name=%s  type=%s  room=%s  vehPos=%s  lastEnter=%s  linked=%s  idleDays=%d",
             now,
             tostring(item.rvId),
-            tostring(rel.vehicleName  or "-"),
-            tostring(rel.typeKey      or "-"),
-            rel.room and rel.room.x or 0,
-            rel.room and rel.room.y or 0,
-            rel.room and rel.room.z or 0,
-            rel.lastPos and string.format("%.0f,%.0f", rel.lastPos.x, rel.lastPos.y) or "-",
-            tostring(rel.lastEnterDate or "-"),
-            tostring(rel.dateLinked    or "-"),
+            tostring(rel.vehicleName  or "?"),
+            tostring(rel.typeKey      or "?"),
+            roomStr, vposStr,
+            tostring(rel.lastEnterDate or "?"),
+            tostring(rel.dateLinked    or "?"),
             item.days)
-        print(logMsg)
-        writeIdleLog(logMsg)
+        print(msg)
+        writeRvmLog(msg)
         RVMServer.dissociate(item.rvId)
     end
 
     local footer = string.format(
         "[%s] [RVM] IdleCleaner: done — dissociated=%d", now, #toClean)
     print(footer)
-    writeIdleLog(footer)
+    writeRvmLog(footer)
 end
 
 -- ============================================================
@@ -540,11 +535,28 @@ local function onAdminCommand(module, command, player, data)
     elseif command == "dissociate" then
         if string.lower(player:getAccessLevel() or "") ~= "admin" then return end
         local rvId = data and data.rvVehicleUniqueId
-        -- Capture typeKey BEFORE the relationship is deleted.
+        -- Capture relationship data BEFORE it is deleted.
         local d2  = ModData.getOrCreate(RVM.POS_DATA_KEY)
         local rel = d2.relationships and d2.relationships[tostring(rvId or "")]
         local dissTypeKey = rel and rel.typeKey
         local ok, err = RVMServer.dissociate(rvId)
+        local now   = os.date("%d/%m/%Y %H:%M")
+        local admin = player:getUsername() or "?"
+        if ok then
+            local name    = rel and rel.vehicleName or "?"
+            local room    = rel and rel.room
+            local roomStr = room and string.format("%d,%d,%d", room.x or 0, room.y or 0, room.z or 0) or "?"
+            local vpos    = rel and rel.lastPos
+            local vposStr = vpos and string.format("%.0f,%.0f,%.0f", vpos.x or 0, vpos.y or 0, vpos.z or 0) or "?"
+            local msg = string.format(
+                "[%s] [RVM] DISSOCIATE  admin=%s  rvId=%s  name=%s  type=%s  room=%s  vehPos=%s",
+                now, admin, tostring(rvId or "?"), name, tostring(dissTypeKey or "?"), roomStr, vposStr)
+            print(msg)
+            writeRvmLog(msg)
+        else
+            print(string.format("[%s] [RVM] DISSOCIATE FAILED  admin=%s  rvId=%s  err=%s",
+                now, admin, tostring(rvId or "?"), tostring(err or "?")))
+        end
         sendServerCommand(player, RVM.MODULE, "dissociateResult",
             { ok = ok, err = err, rvVehicleUniqueId = rvId, typeKey = dissTypeKey })
 

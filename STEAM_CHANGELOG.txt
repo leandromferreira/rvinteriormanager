@@ -2,14 +2,28 @@
 
 [hr][/hr]
 
-[h2]v0.3 — 2026-04-20[/h2]
+[h2]v0.4 — 2026-04-22[/h2]
+
+[h3]New Features[/h3]
+[list]
+[*][b]Dissociation log[/b] — every dissociation (manual or idle cleaner) is now recorded to [b]~/Zomboid/lua/RVM/RVM_dissociate.log[/b] and printed to the server console. Each entry includes: timestamp, trigger (admin username or [i]idle[/i]), vehicle ID, vehicle name, interior type, room coordinates, and last known vehicle world position.
+[/list]
+
+[h3]Bug Fixes[/h3]
+[list]
+[*][b]B42.17 crash on panel open[/b] — [i]cell:getVehicles()[/i] returns a [i]Set[/i] in B42.17 instead of an [i]ArrayList[/i]. All three vehicle iteration sites (two in [i]RVMServer.lua[/i], one in [i]RVMShared.lua[/i]) now use the Java [i]iterator()[/i] / [i]hasNext()[/i] / [i]next()[/i] pattern, which works on both B42.16 and B42.17.
+[/list]
 
 [h3]Changes[/h3]
 [list]
-[*][b]Refreshed UI theme[/b] — admin panel and room picker now use a consistent dark theme matching the style of other quality mods: deeper backgrounds, a red accent bar on table headers, subtle row dividers, and a unified color palette for all buttons (primary, danger, warning).
-
-[*][b]B42.17 compatibility[/b] — [i]cell:getVehicles()[/i] returns a [i]Set[/i] in B42.17 instead of an [i]ArrayList[/i], making indexed access ([i]:get(i)[/i]) crash. Both vehicle iteration loops now use the Java [i]iterator()[/i] / [i]hasNext()[/i] / [i]next()[/i] pattern, which works on both builds.
+[*][b]Refreshed UI theme[/b] — admin panel and room picker now use a consistent dark theme: deeper backgrounds, red accent bar on table headers, subtle row dividers, and a unified color palette for all buttons.
 [/list]
+
+[hr][/hr]
+
+[h2]v0.3 — 2026-04-20[/h2]
+
+[i](superseded by v0.4 — changes listed above)[/i]
 
 [hr][/hr]
 
