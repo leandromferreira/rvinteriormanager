@@ -59,37 +59,6 @@ local function getRoomSize(typeKey)
     return typeDef.roomWidth, typeDef.roomHeight
 end
 
--- Returns a list of free room coords for the given typeKey.
-local function getFreeRooms(typeKey)
-    local ok, RV = pcall(require, "RVVehicleTypes")
-    if not ok or not RV or not RV.VehicleTypes then return {} end
-    local typeDef = RV.VehicleTypes[typeKey]
-    if not typeDef then return {} end
-
-    local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
-    local dataKey = (typeKey == "normal") and "AssignedRooms"
-                                          or  ("AssignedRooms" .. typeKey)
-    local assigned = base[dataKey] or {}
-
-    local occupied = {}
-    for _, roomCoords in pairs(assigned) do
-        local k = string.format("%d-%d-%d",
-            roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
-        occupied[k] = true
-    end
-
-    local free = {}
-    for idx, roomCoords in ipairs(typeDef.rooms) do
-        local k = string.format("%d-%d-%d",
-            roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
-        if not occupied[k] then
-            table.insert(free, { index = idx, x = roomCoords.x,
-                                  y = roomCoords.y, z = roomCoords.z })
-        end
-    end
-    return free
-end
-
 -- Sends the associate command to the server.
 -- selectedRoom is optional { x, y, z }; when provided the server uses that
 -- specific room instead of picking a random free one.
@@ -158,7 +127,7 @@ local function styleBtn(btn, c)
     btn.textColor                = { r=T.text.r, g=T.text.g, b=T.text.b, a=1 }
 end
 
-function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
+function RVMRoomPicker:new(typeKey, vehicle, roomW, roomH)
     local sw  = getCore():getScreenWidth()
     local sh  = getCore():getScreenHeight()
     local o   = ISPanel.new(self,
@@ -171,10 +140,11 @@ function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
     o.moveWithMouse   = true
 
     o.typeKey           = typeKey
-    o.freeRooms         = freeRooms
+    o.freeRooms         = {}
     o.vehicle           = vehicle
     o.roomW             = roomW
     o.roomH             = roomH
+    o.loading           = true
     o.selectedRoomIndex = nil
     o.filterRegion      = getText("IGUI_RVM_Region_All")
     o._lastSearch       = ""
@@ -182,6 +152,30 @@ function RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
     o.listY             = 0
     o.listH             = 0
     return o
+end
+
+-- Called when the server responds with fresh free-room data.
+function RVMRoomPicker:setFreeRooms(rooms, roomW, roomH)
+    self.freeRooms         = rooms
+    self.roomW             = roomW or self.roomW
+    self.roomH             = roomH or self.roomH
+    self.loading           = false
+    self.selectedRoomIndex = nil
+    self.scrollY           = 0
+    self:updateConfirm()
+    -- Rebuild region dropdown options with fresh data.
+    local allLabel = getText("IGUI_RVM_Region_All")
+    self.comboRegion.options = { allLabel }
+    local seen = {}
+    for _, room in ipairs(rooms) do
+        local r = getRoomRegion(room.x)
+        if not seen[r] then
+            seen[r] = true
+            table.insert(self.comboRegion.options, r)
+        end
+    end
+    self.comboRegion.selected = 1
+    self.filterRegion = allLabel
 end
 
 function RVMRoomPicker:prerender()
@@ -311,6 +305,17 @@ function RVMRoomPicker:render()
     local sizeStr = (self.roomW and self.roomH)
         and ("  [" .. self.roomW .. "x" .. self.roomH .. "]")
         or  ""
+
+    if self.loading then
+        self:drawText(
+            getText("IGUI_RVM_Picker_Title") .. " - " .. (self.typeKey or "") .. sizeStr,
+            x, y, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+        local midY = math.floor(self.height / 2) - 8
+        self:drawText(getText("IGUI_RVM_Loading"),
+            x, midY, T.muted.r, T.muted.g, T.muted.b, 1, UIFont.Small)
+        return
+    end
+
     local filtered = self:getFiltered()
 
     -- Detect search text change → deselect + reset scroll
@@ -397,10 +402,15 @@ end
 function RVMRoomPicker:onMouseWheel(del)
     local filtered  = self:getFiltered()
     local totalH    = #filtered * RP_ROW
+    local step      = del * RP_ROW * 3
     local maxScroll = math.max(0, totalH - self.listH)
-    self.scrollY    = math.max(0, math.min(maxScroll, self.scrollY - del * RP_ROW * 3))
+    self.scrollY    = math.max(0, math.min(maxScroll, self.scrollY + step))
     return true
 end
+
+-- Populated at right-click time so the picker can open without a loading state.
+-- [typeKey] = { count = N, rooms = {...} }
+local freeRoomCache = {}
 
 -- ============================================================
 -- Context Menu injection
@@ -430,12 +440,16 @@ function ISVehicleMenu.FillMenuOutsideVehicle(player, context, vehicle, test)
         end
         context:addOption(getText("IGUI_RVM_Ctx_Dissociate"), fn, fn)
     else
-        -- Vehicle has no room — offer Associate (random or choose)
-        local freeRooms    = getFreeRooms(typeKey)
+        -- Vehicle has no room — pre-fetch free rooms immediately at right-click time
+        -- so the picker can open without a loading state when the admin clicks it.
         local roomW, roomH = getRoomSize(typeKey)
         local sizeTag      = (roomW and roomH) and (" [" .. roomW .. "x" .. roomH .. "]") or ""
+        local cached       = freeRoomCache[typeKey]
 
-        if #freeRooms == 0 then
+        sendClientCommand(getPlayer(), RVM.MODULE, "getFreeRooms", { typeKey = typeKey })
+
+        -- If cache says 0 free rooms, show a disabled option (may be stale; picker will verify).
+        if cached and cached.count == 0 then
             local opt = context:addOption(getText("IGUI_RVM_Ctx_NoFreeRooms", typeKey, sizeTag), nil, nil)
             opt.notAvailable = true
             return
@@ -458,17 +472,24 @@ function ISVehicleMenu.FillMenuOutsideVehicle(player, context, vehicle, test)
         end
         subMenu:addOption(getText("IGUI_RVM_Ctx_RandomRoom"), fnRandom, fnRandom)
 
-        -- Same-type room picker
+        -- Room picker — uses pre-fetched cache if already available, loading state as fallback.
         local fnPicker = function()
             if RVMRoomPicker.instance then
                 RVMRoomPicker.instance:removeFromUIManager()
             end
-            local picker = RVMRoomPicker:new(typeKey, freeRooms, vehicle, roomW, roomH)
+            local picker = RVMRoomPicker:new(typeKey, vehicle, roomW, roomH)
             picker:initialise()
             picker:addToUIManager()
             RVMRoomPicker.instance = picker
+            local hit = freeRoomCache[typeKey]
+            if hit then
+                picker:setFreeRooms(hit.rooms, roomW, roomH)
+            end
+            -- If cache missed (response not yet arrived), the picker stays in loading
+            -- state and freeRoomsResponse will call setFreeRooms when it arrives.
         end
-        subMenu:addOption(getText("IGUI_RVM_Ctx_ChooseRoom", tostring(#freeRooms)), fnPicker, fnPicker)
+        local countLabel = cached and tostring(cached.count) or "?"
+        subMenu:addOption(getText("IGUI_RVM_Ctx_ChooseRoom", countLabel), fnPicker, fnPicker)
     end
 end
 
@@ -489,6 +510,19 @@ local function onServerCommand(module, command, args)
         return
     end
 
+    if command == "freeRoomsResponse" then
+        local typeKey = args and args.typeKey
+        local rooms   = (args and args.rooms) or {}
+        if typeKey then
+            freeRoomCache[typeKey] = { count = #rooms, rooms = rooms }
+        end
+        local picker = RVMRoomPicker.instance
+        if picker and picker.typeKey == typeKey then
+            picker:setFreeRooms(rooms, args.roomW, args.roomH)
+        end
+        return
+    end
+
     if command == "associateResult" then
         if args and args.ok then
             local rvId    = args.rvVehicleUniqueId
@@ -502,9 +536,8 @@ local function onServerCommand(module, command, args)
                 local strId = tostring(rvId)
                 local numId = tonumber(rvId)
                 base[dataKey][strId] = { x = room.x, y = room.y, z = room.z }
-                if numId then
-                    base[dataKey][numId] = base[dataKey][strId]
-                end
+                if numId then base[dataKey][numId] = base[dataKey][strId] end
+                freeRoomCache[typeKey] = nil
             end
         elseif args and not args.ok then
             rvm_notify(getText("IGUI_RVM_Err_AssocFailed", args.err or "unknown error"))
@@ -523,6 +556,7 @@ local function onServerCommand(module, command, args)
                     base[dataKey][strId] = nil
                     if numId then base[dataKey][numId] = nil end
                 end
+                freeRoomCache[typeKey] = nil
             end
         elseif args and not args.ok then
             rvm_notify(getText("IGUI_RVM_Err_DissocFailed", args.err or "unknown error"))

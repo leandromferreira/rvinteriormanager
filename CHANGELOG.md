@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3] — 2026-04-26
+
+### Fixed
+- **Room Picker — free room count wrong**: the picker and context menu were showing all rooms as free because the client-side ModData was never populated on first load. Replaced the local-cache approach with a server-side `getFreeRooms` command that returns authoritative data.
+- **Room Picker — count stale after associate/dissociate**: `freeRoomCache` is now invalidated on `associateResult` and `dissociateResult` so the next right-click always fetches a fresh count.
+- **Room Picker — scroll direction inverted**: `onMouseWheel` was using `- del`; corrected to `+ del` to match the admin panel convention.
+
+### Changed
+- **Context menu pre-fetch**: `getFreeRooms` is now sent to the server at right-click time (when an unassigned RV is detected), so by the time the admin clicks "Choose Room" the data is already cached and the picker opens instantly without a loading state.
+- **Room Picker — cache structure**: `freeRoomCache[typeKey]` now stores `{ count, rooms }` together, removing the need for a separate count cache and rooms cache.
+
+---
+
 ## [0.2] — 2026-04-15
 
 ### Added

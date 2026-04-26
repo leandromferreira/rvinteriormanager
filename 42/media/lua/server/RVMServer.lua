@@ -578,6 +578,41 @@ local function onAdminCommand(module, command, player, data)
         print("[RVM] forceIdleCheck requested by " .. player:getUsername())
         checkIdleRooms()
         sendServerCommand(player, RVM.MODULE, "idleCheckResult", { ok = true })
+
+    elseif command == "getFreeRooms" then
+        local lvl = string.lower(player:getAccessLevel() or "")
+        if lvl ~= "admin" and lvl ~= "moderator" then return end
+        local typeKey = data and data.typeKey
+        if not typeKey then return end
+        local ok, RV = pcall(require, "RVVehicleTypes")
+        if not ok or not RV or not RV.VehicleTypes then return end
+        local typeDef = RV.VehicleTypes[typeKey]
+        if not typeDef then return end
+        local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+        local dataKey = (typeKey == "normal") and "AssignedRooms"
+                                              or  ("AssignedRooms" .. typeKey)
+        local assigned = base[dataKey] or {}
+        local occupied = {}
+        for _, roomCoords in pairs(assigned) do
+            local k = string.format("%d-%d-%d",
+                roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
+            occupied[k] = true
+        end
+        local free = {}
+        for idx, roomCoords in ipairs(typeDef.rooms or {}) do
+            local k = string.format("%d-%d-%d",
+                roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
+            if not occupied[k] then
+                table.insert(free, { index = idx,
+                    x = roomCoords.x, y = roomCoords.y, z = roomCoords.z })
+            end
+        end
+        sendServerCommand(player, RVM.MODULE, "freeRoomsResponse", {
+            typeKey = typeKey,
+            rooms   = free,
+            roomW   = typeDef.roomWidth,
+            roomH   = typeDef.roomHeight,
+        })
     end
 end
 
