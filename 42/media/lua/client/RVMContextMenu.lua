@@ -94,8 +94,6 @@ end
 -- ============================================================
 RVMRoomPicker = ISPanel:derive("RVMRoomPicker")
 
-local RP_W        = 420
-local RP_H        = 400
 local RP_ROW      = 20
 local RP_PAD      = 8
 local RP_HDR      = 22
@@ -130,10 +128,12 @@ end
 function RVMRoomPicker:new(typeKey, vehicle, roomW, roomH)
     local sw  = getCore():getScreenWidth()
     local sh  = getCore():getScreenHeight()
+    local rpW = math.floor(sw * 0.26)
+    local rpH = math.floor(sh * 0.46)
     local o   = ISPanel.new(self,
-        math.floor((sw - RP_W) / 2),
-        math.floor((sh - RP_H) / 2),
-        RP_W, RP_H)
+        math.floor((sw - rpW) / 2),
+        math.floor((sh - rpH) / 2),
+        rpW, rpH)
 
     o.backgroundColor = T.bg
     o.borderColor     = T.border

@@ -11,6 +11,7 @@ RVM.MODULE            = "RVManager"
 RVM.BASE_MOD_DATA_KEY = "modPROJECTRVInterior"
 RVM.POS_DATA_KEY      = "RVInteriorManager"
 
+
 -- ============================================================
 -- local buildRvUniqueIdToEngineId()
 -- ============================================================

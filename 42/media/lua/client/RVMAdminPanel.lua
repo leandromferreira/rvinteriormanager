@@ -22,6 +22,8 @@ local SUMMARY_MAX_H = 120   -- visible rows ~6; scrollable if more types exist
 
 -- Summary columns: Type | Size | Total | Occupied | Free
 local SCOL = { 160, 55, 55, 70, 55 }
+local SCOL_TOTAL = 0
+for _, w in ipairs(SCOL) do SCOL_TOTAL = SCOL_TOTAL + w end
 
 -- Fixed-width assignment columns (all except Name)
 -- VehicleID, VehPos, RVType, RVPos, Linked, LastIn, LastOut
@@ -92,6 +94,14 @@ function RVManagerPanel:new(x, y, w, h)
     o.assignTableY   = 0
     o.assignContentH = 0
     o.assignRowCount = 0
+
+    o.selectedSummaryType  = nil
+    o.vehicleListScrollY   = 0
+    o.vehicleListLastSearch = ""
+    o.vehicleListRegionY   = 0
+    o.vehicleListRegionH   = 0
+    o.vehicleListX         = 0
+    o.vehicleListW         = 0
 
     -- Assignment table sort state
     o.sortCol    = 0     -- 0 = no sort; 1..8 = column index
@@ -189,6 +199,12 @@ function RVManagerPanel:initialise()
     self.filterEntry:setEditable(true)
     self.filterEntry:setPlaceholderText(getText("IGUI_RVM_SearchPlaceholder"))
 
+    self.vehicleSearchEntry = ISTextEntryBox:new("", 0, self.height + 50, 100, FILTER_H)
+    self:addChild(self.vehicleSearchEntry)
+    self.vehicleSearchEntry:initialise()
+    self.vehicleSearchEntry:setEditable(true)
+    self.vehicleSearchEntry:setPlaceholderText(getText("IGUI_RVM_VehSearch_Placeholder"))
+
     self:updateButtons()
     self:requestData()
 end
@@ -214,11 +230,13 @@ function RVManagerPanel:requestData()
 end
 
 function RVManagerPanel:receiveData(data)
-    self.loading        = false
-    self.data           = data
-    self.selectedRvId   = nil
-    self.scrollY        = 0
-    self.summaryScrollY = 0
+    self.loading             = false
+    self.data                = data
+    self.selectedRvId        = nil
+    self.selectedSummaryType = nil
+    self.vehicleListScrollY  = 0
+    self.scrollY             = 0
+    self.summaryScrollY      = 0
     self:updateButtons()
 end
 
@@ -263,6 +281,7 @@ function RVManagerPanel:render()
         -- Park filter widgets off-screen while loading
         if self.filterCombo then self.filterCombo:setY(self.height + 50) end
         if self.filterEntry then self.filterEntry:setY(self.height + 50) end
+        if self.vehicleSearchEntry then self.vehicleSearchEntry:setY(self.height + 50) end
         self:drawText(getText("IGUI_RVM_Loading"), x, y + 20, 0.7, 0.7, 0.7, 1, UIFont.Small)
         return
     end
@@ -270,6 +289,7 @@ function RVManagerPanel:render()
     if not self.data then
         if self.filterCombo then self.filterCombo:setY(self.height + 50) end
         if self.filterEntry then self.filterEntry:setY(self.height + 50) end
+        if self.vehicleSearchEntry then self.vehicleSearchEntry:setY(self.height + 50) end
         self:drawText(getText("IGUI_RVM_NoData"), x, y + 20, 0.8, 0.7, 0.3, 1, UIFont.Small)
         return
     end
@@ -308,6 +328,36 @@ function RVManagerPanel:render()
     end
 end
 
+-- ============================================================
+-- Summary sort helper — shared by render and click detection
+-- ============================================================
+function RVManagerPanel:getSortedSummaryTypes()
+    if not self.data or not self.data.summary then return {} end
+    local types = {}
+    for k in pairs(self.data.summary) do table.insert(types, k) end
+
+    if self.summarySortCol == 0 or self.summarySortCol == 1 then
+        local asc = (self.summarySortCol == 0) or self.summarySortAsc
+        table.sort(types, function(a, b) if asc then return a < b else return a > b end end)
+    else
+        local function summaryKey(typeKey)
+            local s = self.data.summary[typeKey]
+            if self.summarySortCol == 2 then return (s.roomW or 0) * 1000 + (s.roomH or 0)
+            elseif self.summarySortCol == 3 then return s.totalRooms or 0
+            elseif self.summarySortCol == 4 then return s.occupied   or 0
+            elseif self.summarySortCol == 5 then return s.free       or 0
+            end
+            return 0
+        end
+        local asc = self.summarySortAsc
+        table.sort(types, function(a, b)
+            local va, vb = summaryKey(a), summaryKey(b)
+            if asc then return va < vb else return va > vb end
+        end)
+    end
+    return types
+end
+
 function RVManagerPanel:renderSummary(x, y)
     local hdrs = {
         getText("IGUI_RVM_Col_Type"),
@@ -320,16 +370,14 @@ function RVManagerPanel:renderSummary(x, y)
     self.summaryHdrY = y
     self.scolX = {}
     local tm = getTextManager()
-    -- Full-width header background + bottom divider
-    self:drawRect(x, y, self.width - PAD * 2, HDR_H, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
-    self:drawRect(x, y + HDR_H - 1, self.width - PAD * 2, 1, 1, T.divider.r, T.divider.g, T.divider.b)
-    -- Left accent bar
+    -- Summary header background (left column only) + bottom divider
+    self:drawRect(x, y, SCOL_TOTAL, HDR_H, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
+    self:drawRect(x, y + HDR_H - 1, SCOL_TOTAL, 1, 1, T.divider.r, T.divider.g, T.divider.b)
     self:drawRect(x, y, 4, HDR_H, 1, T.accent.r, T.accent.g, T.accent.b)
 
     local cx = x
     for i, h in ipairs(hdrs) do
         self.scolX[i] = cx
-        -- Sort indicator on right edge of header
         local ind, ir, ig, ib
         if self.summarySortCol == i then
             ind = self.summarySortAsc and "^" or "v"
@@ -345,48 +393,26 @@ function RVManagerPanel:renderSummary(x, y)
     end
     y = y + HDR_H
 
-    if not self.data.summary then return y end
-
-    local types = {}
-    for k in pairs(self.data.summary) do table.insert(types, k) end
-
-    -- Apply column sort; default (col 0) = alphabetical by type name
-    if self.summarySortCol == 0 or self.summarySortCol == 1 then
-        local asc = (self.summarySortCol == 0) or self.summarySortAsc
-        table.sort(types, function(a, b)
-            if asc then return a < b else return a > b end
-        end)
-    else
-        local function summaryKey(typeKey)
-            local s = self.data.summary[typeKey]
-            if self.summarySortCol == 2 then
-                return (s.roomW or 0) * 1000 + (s.roomH or 0)
-            elseif self.summarySortCol == 3 then return s.totalRooms or 0
-            elseif self.summarySortCol == 4 then return s.occupied   or 0
-            elseif self.summarySortCol == 5 then return s.free       or 0
-            end
-            return 0
-        end
-        local asc = self.summarySortAsc
-        table.sort(types, function(a, b)
-            local va, vb = summaryKey(a), summaryKey(b)
-            if asc then return va < vb else return va > vb end
-        end)
+    if not self.data.summary then
+        local vlX = x + SCOL_TOTAL + PAD
+        local vlW = self.width - PAD - vlX
+        if vlW > 60 then self:renderVehicleList(vlX, self.summaryHdrY, vlW, HDR_H) end
+        return y
     end
+
+    local types = self:getSortedSummaryTypes()
 
     local totalH  = #types * ROW_H
     local clampH  = math.min(totalH, SUMMARY_MAX_H)
-
     local maxScroll = math.max(0, totalH - clampH)
     self.summaryScrollY = math.max(0, math.min(maxScroll, self.summaryScrollY))
 
     self.summaryRegionY = y
     self.summaryRegionH = clampH
 
-    self:setStencilRect(0, y, self.width, clampH)
+    self:setStencilRect(x, y, SCOL_TOTAL, clampH)
 
     local rowY = y - self.summaryScrollY
-    -- Column text colors: type=text, size=muted, total/occ/free=text
     local clr = {
         T.text,
         T.muted,
@@ -397,10 +423,10 @@ function RVManagerPanel:renderSummary(x, y)
 
     for idx, typeKey in ipairs(types) do
         if rowY + ROW_H > y and rowY < y + clampH then
-            local bg = (idx % 2 == 0) and T.rowA or T.rowB
-            self:drawRect(x, rowY, self.width - PAD * 2, ROW_H, 1, bg.r, bg.g, bg.b)
-            -- row divider
-            self:drawRect(x, rowY + ROW_H - 1, self.width - PAD * 2, 1, 0.5, T.divider.r, T.divider.g, T.divider.b)
+            local selected = typeKey == self.selectedSummaryType
+            local bg = selected and T.rowSel or ((idx % 2 == 0) and T.rowA or T.rowB)
+            self:drawRect(x, rowY, SCOL_TOTAL, ROW_H, 1, bg.r, bg.g, bg.b)
+            self:drawRect(x, rowY + ROW_H - 1, SCOL_TOTAL, 1, 0.5, T.divider.r, T.divider.g, T.divider.b)
 
             local s       = self.data.summary[typeKey]
             local sizeStr = (s.roomW and s.roomH) and (s.roomW .. "x" .. s.roomH) or "-"
@@ -422,10 +448,110 @@ function RVManagerPanel:renderSummary(x, y)
         local barH  = math.max(12, clampH * clampH / totalH)
         local ratio = maxScroll > 0 and self.summaryScrollY / maxScroll or 0
         local barY  = y + ratio * (clampH - barH)
-        self:drawRect(self.width - PAD - 4, barY, 4, barH, 0.8, T.accent.r, T.accent.g, T.accent.b)
+        self:drawRect(x + SCOL_TOTAL - 4, barY, 4, barH, 0.8, T.accent.r, T.accent.g, T.accent.b)
+    end
+
+    -- Vehicle list to the right of the summary table
+    local vlX = x + SCOL_TOTAL + PAD
+    local vlW = self.width - PAD - vlX
+    if vlW > 60 then
+        self:renderVehicleList(vlX, self.summaryHdrY, vlW, HDR_H + clampH)
     end
 
     return y + clampH
+end
+
+-- ============================================================
+-- Vehicle list panel (upper-right, shown when a summary row is selected)
+-- ============================================================
+function RVManagerPanel:renderVehicleList(x, y, w, totalH)
+    local searchH   = FILTER_H
+    local listAreaH = math.max(0, totalH - HDR_H - searchH)
+
+    -- Title header
+    self:drawRect(x, y, w, HDR_H, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
+    self:drawRect(x, y + HDR_H - 1, w, 1, 1, T.divider.r, T.divider.g, T.divider.b)
+    self:drawRect(x, y, 4, HDR_H, 1, T.accent.r, T.accent.g, T.accent.b)
+
+    local title = self.selectedSummaryType and self.selectedSummaryType
+                    or getText("IGUI_RVM_VehList_SelectPrompt")
+    self:drawText(trimText(UIFont.Small, title, w - 10), x + 6, y + 2,
+                  T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    y = y + HDR_H
+
+    -- Reposition vehicleSearchEntry widget
+    if self.vehicleSearchEntry then
+        self.vehicleSearchEntry:setX(x)
+        self.vehicleSearchEntry:setY(y)
+        self.vehicleSearchEntry:setWidth(w)
+        self.vehicleSearchEntry:setHeight(searchH)
+    end
+    y = y + searchH
+
+    -- Store region info for scroll / wheel
+    self.vehicleListX       = x
+    self.vehicleListW       = w
+    self.vehicleListRegionY = y
+    self.vehicleListRegionH = listAreaH
+
+    if not self.selectedSummaryType then
+        self:drawRect(x, y, w, listAreaH, 0.25, T.rowA.r, T.rowA.g, T.rowA.b)
+        return
+    end
+
+    local ok, RV = pcall(require, "RVVehicleTypes")
+    if not ok or not RV or not RV.VehicleTypes then return end
+    local typeDef = RV.VehicleTypes[self.selectedSummaryType]
+    if not typeDef or not typeDef.scripts then return end
+
+    -- Read search text and detect changes (reset scroll on change)
+    local search = ""
+    if self.vehicleSearchEntry then
+        local raw = self.vehicleSearchEntry:getText()
+        if type(raw) == "string" then search = raw:lower():match("^%s*(.-)%s*$") or "" end
+    end
+    if search ~= (self.vehicleListLastSearch or "") then
+        self.vehicleListLastSearch = search
+        self.vehicleListScrollY    = 0
+    end
+
+    -- Filter scripts by search term
+    local filtered = {}
+    for _, script in ipairs(typeDef.scripts) do
+        if search == "" or script:lower():find(search, 1, true) then
+            table.insert(filtered, script)
+        end
+    end
+
+    local totalScriptH = #filtered * ROW_H
+    local maxScroll    = math.max(0, totalScriptH - listAreaH)
+    self.vehicleListScrollY = math.max(0, math.min(maxScroll, self.vehicleListScrollY))
+
+    if listAreaH > 0 then
+        self:setStencilRect(x, y, w, listAreaH)
+
+        local rowY = y - self.vehicleListScrollY
+        for idx, script in ipairs(filtered) do
+            if rowY + ROW_H > y and rowY < y + listAreaH then
+                local bg = (idx % 2 == 0) and T.rowA or T.rowB
+                self:drawRect(x, rowY, w, ROW_H, 1, bg.r, bg.g, bg.b)
+                self:drawRect(x, rowY + ROW_H - 1, w, 1, 0.5, T.divider.r, T.divider.g, T.divider.b)
+                local display = script:match("%.(.+)") or script
+                self:drawText(trimText(UIFont.Small, display, w - 8), x + 3, rowY + 1,
+                              T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+            end
+            rowY = rowY + ROW_H
+        end
+
+        self:clearStencilRect()
+
+        if totalScriptH > listAreaH then
+            local barH  = math.max(12, listAreaH * listAreaH / totalScriptH)
+            local ratio = maxScroll > 0 and self.vehicleListScrollY / maxScroll or 0
+            local barY  = y + ratio * (listAreaH - barH)
+            self:drawRect(x + w - 4, barY, 4, barH, 0.8, T.accent.r, T.accent.g, T.accent.b)
+        end
+    end
 end
 
 function RVManagerPanel:renderAssignments(x, y)
@@ -562,6 +688,26 @@ function RVManagerPanel:onMouseDown(x, y)
         return
     end
 
+    -- Summary body row click → select type for vehicle list
+    if y >= self.summaryRegionY and y < self.summaryRegionY + self.summaryRegionH
+        and x >= PAD and x < PAD + SCOL_TOTAL then
+        local types  = self:getSortedSummaryTypes()
+        local relY   = y - self.summaryRegionY + self.summaryScrollY
+        local rowIdx = math.floor(relY / ROW_H) + 1
+        if rowIdx >= 1 and rowIdx <= #types then
+            local clicked = types[rowIdx]
+            if self.selectedSummaryType == clicked then
+                self.selectedSummaryType = nil
+            else
+                self.selectedSummaryType    = clicked
+                self.vehicleListScrollY     = 0
+                self.vehicleListLastSearch  = ""
+                if self.vehicleSearchEntry then self.vehicleSearchEntry:setText("") end
+            end
+        end
+        return
+    end
+
     -- Assignment header row click → toggle assignment sort
     if y >= self.assignHdrY and y < self.assignHdrY + HDR_H and #self.acolX > 0 then
         for i, startX in ipairs(self.acolX) do
@@ -596,16 +742,40 @@ end
 function RVManagerPanel:onMouseWheel(del)
     if not self.data then return false end
 
+    local mx   = self:getMouseX()
     local my   = self:getMouseY()
     local step = del * ROW_H * 3
 
-    if my >= self.summaryRegionY and my < self.summaryRegionY + self.summaryRegionH then
+    -- Summary table (left side)
+    if my >= self.summaryRegionY and my < self.summaryRegionY + self.summaryRegionH
+        and mx < PAD + SCOL_TOTAL then
         local types = self.data.summary and self.data.summary or {}
         local count = 0
         for _ in pairs(types) do count = count + 1 end
         local totalH    = count * ROW_H
         local maxScroll = math.max(0, totalH - self.summaryRegionH)
         self.summaryScrollY = math.max(0, math.min(maxScroll, self.summaryScrollY + step))
+
+    -- Vehicle list (right side)
+    elseif my >= self.vehicleListRegionY and my < self.vehicleListRegionY + self.vehicleListRegionH
+        and mx >= self.vehicleListX then
+        if self.selectedSummaryType then
+            local ok, RV = pcall(require, "RVVehicleTypes")
+            if ok and RV and RV.VehicleTypes then
+                local typeDef = RV.VehicleTypes[self.selectedSummaryType]
+                if typeDef and typeDef.scripts then
+                    local search = self.vehicleListLastSearch or ""
+                    local count  = 0
+                    for _, s in ipairs(typeDef.scripts) do
+                        if search == "" or s:lower():find(search, 1, true) then count = count + 1 end
+                    end
+                    local maxScroll = math.max(0, count * ROW_H - self.vehicleListRegionH)
+                    self.vehicleListScrollY = math.max(0, math.min(maxScroll, self.vehicleListScrollY + step))
+                end
+            end
+        end
+
+    -- Assignment table
     else
         local filtered  = self:getFilteredAssignments()
         local totalH    = #filtered * ROW_H
@@ -845,8 +1015,8 @@ function RVManagerPanel.open()
 
     local sw = getCore():getScreenWidth()
     local sh = getCore():getScreenHeight()
-    local pw = math.min(950, math.floor(sw * 0.92))
-    local ph = math.min(720, math.floor(sh * 0.88))
+    local pw = math.floor(sw * 0.65)
+    local ph = math.floor(sh * 0.82)
     local px = math.floor((sw - pw) / 2)
     local py = math.floor((sh - ph) / 2)
 

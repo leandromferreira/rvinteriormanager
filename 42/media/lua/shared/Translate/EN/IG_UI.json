@@ -49,5 +49,7 @@
     "IGUI_RVM_Region_Update2": "Update 2",
     "IGUI_RVM_Err_AssocFailed": "[RVM] Associate failed: %1",
     "IGUI_RVM_Err_DissocFailed": "[RVM] Dissociate failed: %1",
-    "IGUI_RVM_Err_AccessDenied": "[RVM] Only admins can assign RV rooms on this server. Ask an admin for help."
+    "IGUI_RVM_Err_AccessDenied": "[RVM] Only admins can assign RV rooms on this server. Ask an admin for help.",
+    "IGUI_RVM_VehList_SelectPrompt": "Compatible Vehicles — select a type",
+    "IGUI_RVM_VehSearch_Placeholder": "Search vehicle name..."
 }

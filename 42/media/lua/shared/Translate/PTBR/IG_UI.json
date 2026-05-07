@@ -49,5 +49,7 @@
     "IGUI_RVM_Region_Update2": "Atualização 2",
     "IGUI_RVM_Err_AssocFailed": "[RVM] Falha ao associar: %1",
     "IGUI_RVM_Err_DissocFailed": "[RVM] Falha ao desassociar: %1",
-    "IGUI_RVM_Err_AccessDenied": "[RVM] Apenas administradores podem atribuir quartos de RV neste servidor. Peça ajuda a um administrador."
+    "IGUI_RVM_Err_AccessDenied": "[RVM] Apenas administradores podem atribuir quartos de RV neste servidor. Peça ajuda a um administrador.",
+    "IGUI_RVM_VehList_SelectPrompt": "Veículos Compatíveis — selecione um tipo",
+    "IGUI_RVM_VehSearch_Placeholder": "Buscar nome do veículo..."
 }
