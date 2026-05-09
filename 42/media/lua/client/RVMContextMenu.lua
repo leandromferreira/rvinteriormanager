@@ -9,8 +9,10 @@ require("RVMShared")
 -- Cache tables declared here so all functions below can access them.
 -- freeRoomCache: right-click pre-fetch of free rooms per typeKey combo
 -- assignmentCache: server-authoritative rvId→{typeKey,room} state
-local freeRoomCache   = {}
-local assignmentCache = {}
+-- clientScriptsState: server-authoritative typeKey→scripts, updated via adminSync
+local freeRoomCache      = {}
+local assignmentCache    = {}
+local clientScriptsState = {}   -- populated on first adminSync, authoritative for type lookups
 
 -- ============================================================
 -- Helpers
@@ -22,17 +24,30 @@ local function isAdmin(player)
 end
 
 -- Returns all typeKeys a vehicle's script belongs to (may be multiple).
+-- Uses server-synced clientScriptsState when available (avoids require cache issues).
 local function getRVTypeKeys(vehicle)
-    local ok, RV = pcall(require, "RVVehicleTypes")
-    if not ok or not RV or not RV.VehicleTypes then return {} end
     local script = vehicle:getScript()
     if not script then return {} end
     local scriptName = tostring(script:getFullName())
     local typeKeys = {}
-    for typeKey, typeDef in pairs(RV.VehicleTypes) do
-        if typeDef.scripts then
-            for _, s in ipairs(typeDef.scripts) do
+
+    local hasState = false
+    for _ in pairs(clientScriptsState) do hasState = true; break end
+
+    if hasState then
+        for typeKey, scripts in pairs(clientScriptsState) do
+            for _, s in ipairs(scripts) do
                 if s == scriptName then table.insert(typeKeys, typeKey); break end
+            end
+        end
+    else
+        local ok, RV = pcall(require, "RVVehicleTypes")
+        if not ok or not RV or not RV.VehicleTypes then return {} end
+        for typeKey, typeDef in pairs(RV.VehicleTypes) do
+            if typeDef.scripts then
+                for _, s in ipairs(typeDef.scripts) do
+                    if s == scriptName then table.insert(typeKeys, typeKey); break end
+                end
             end
         end
     end
@@ -96,6 +111,18 @@ end
 -- Maps an X coordinate to a human-readable map region label.
 local function getRoomRegion(x)
     return RVM.getRegionLabel(x)
+end
+
+local function trimText(font, txt, maxW)
+    if not txt or txt == "" then return "" end
+    local tm = getTextManager()
+    if tm:MeasureStringX(font, txt) <= maxW then return txt end
+    local ellW = tm:MeasureStringX(font, "...")
+    local s = txt
+    while #s > 0 and (tm:MeasureStringX(font, s) + ellW) > maxW do
+        s = string.sub(s, 1, #s - 1)
+    end
+    return s .. "..."
 end
 
 -- Sends the dissociate command to the server.
@@ -345,10 +372,11 @@ function RVMRoomPicker:render()
 
     -- Column positions
     local C_NUM    = x + 2
-    local C_TYPE   = x + 32   -- typeKey [WxH]
-    local C_REGION = x + 130
-    local C_X      = x + 210
-    local C_Y      = x + 280
+    local C_TYPE   = x + 30   -- typeKey [WxH]
+    local C_REGION = x + 175
+    local C_X      = x + 258
+    local C_Y      = x + 316
+    local C_TYPE_W = 141      -- available width for type text
 
     self:drawRect(x, y, self.width - RP_PAD * 2, RP_HDR, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
     self:drawRect(x, y + RP_HDR - 1, self.width - RP_PAD * 2, 1, 1, T.divider.r, T.divider.g, T.divider.b)
@@ -376,9 +404,9 @@ function RVMRoomPicker:render()
             local typeStr = room.typeKey or "?"
             if room.roomW and room.roomH then typeStr = typeStr .. " " .. room.roomW .. "x" .. room.roomH end
             local region  = getRoomRegion(room.x)
-            self:drawText(tostring(room.index), C_NUM,    rowY + 2, T.muted.r, T.muted.g, T.muted.b, 1, UIFont.Small)
-            self:drawText(typeStr,              C_TYPE,   rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
-            self:drawText(region,               C_REGION, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(tostring(room.index),                         C_NUM,    rowY + 2, T.muted.r, T.muted.g, T.muted.b, 1, UIFont.Small)
+            self:drawText(trimText(UIFont.Small, typeStr, C_TYPE_W),  C_TYPE,   rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(region,                                       C_REGION, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
             self:drawText(tostring(room.x),     C_X,      rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
             self:drawText(tostring(room.y),     C_Y,      rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
         end
@@ -447,13 +475,14 @@ function ISVehicleMenu.FillMenuOutsideVehicle(player, context, vehicle, test)
     local playerObj = getSpecificPlayer(player)
     if not playerObj or not isAdmin(playerObj) then return end
 
-    local typeKeys = getRVTypeKeys(vehicle)
-    if #typeKeys == 0 then return end
-
     local assignedRvId, assignedTypeKey = getAssignedRvId(vehicle)
+    local typeKeys = getRVTypeKeys(vehicle)
+
+    -- Show nothing if vehicle has no assignment and is not in any type
+    if not assignedRvId and #typeKeys == 0 then return end
 
     if assignedRvId then
-        -- Vehicle already has a room — offer Dissociate
+        -- Vehicle has an active room — offer Dissociate even if script was removed from types
         local fn = function() sendDissociate(assignedRvId) end
         context:addOption(getText("IGUI_RVM_Ctx_Dissociate"), fn, fn)
     else
@@ -533,8 +562,14 @@ local function onServerCommand(module, command, args)
         -- Keeps VehicleTypes scripts and assignment state in sync.
         local scriptsState = args and args.scriptsState
         if scriptsState then
-            local okRV, RV = pcall(require, "RVVehicleTypes")
-            if okRV and RV and RV.VehicleTypes then
+            -- Store authoritatively so getRVTypeKeys doesn't depend on require caching.
+            clientScriptsState = {}
+            for tk, scripts in pairs(scriptsState) do
+                clientScriptsState[tk] = scripts
+            end
+            -- Patch RV.VehicleTypes directly via the global (same reference the base mod uses),
+            -- so the base mod's own radial-menu check also sees the updated scripts list.
+            if RV and RV.VehicleTypes then
                 for tk, scripts in pairs(scriptsState) do
                     if RV.VehicleTypes[tk] then
                         RV.VehicleTypes[tk].scripts = scripts

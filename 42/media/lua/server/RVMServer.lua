@@ -118,11 +118,29 @@ end
 -- ============================================================
 -- Idle room cleaner
 -- ============================================================
--- Appends msg to ~/Zomboid/lua/RVM/RVM_dissociate.log.
--- getFileWriter resolves paths relative to ~/Zomboid/ and creates subdirs as needed.
+-- Session idle log
+-- ============================================================
+-- One file per server start, handle kept open for the whole session so
+-- every writeRvmLog call actually appends (getFileWriter always creates
+-- a new file on each open, so we must never reopen).
+local rvmLogHandle = nil
+
 local function writeRvmLog(msg)
-    local f = getFileWriter("RVM/RVM_dissociate.log", true, false)
-    if f then f:write(msg .. "\n"); f:close() end
+    if not rvmLogHandle then return end
+    local ok, err = pcall(function() rvmLogHandle:write(msg .. "\n") end)
+    if not ok then print("[RVM] writeRvmLog error: " .. tostring(err)) end
+end
+
+local function initRvmLog()
+    local ts = os.date("%Y-%m-%d_%H-%M-%S")
+    local path = "RVM/idle_" .. ts .. ".txt"
+    rvmLogHandle = getFileWriter(path, true, false)
+    if rvmLogHandle then
+        rvmLogHandle:write("-- RVM Idle Log -- server start " .. os.date("%d/%m/%Y %H:%M:%S") .. "\n")
+        print("[RVM] log file: " .. path)
+    else
+        print("[RVM] WARNING: could not create log file " .. path)
+    end
 end
 
 -- Parses "DD/MM/YYYY HH:MM" → os.time value, or nil.
@@ -162,14 +180,17 @@ local function checkIdleRooms()
         end
     end
 
-    if #toClean == 0 then return end
-
     local now = os.date("%d/%m/%Y %H:%M")
     local header = string.format(
         "[%s] [RVM] IdleCleaner: running — threshold=%d day(s), candidates=%d",
         now, idleDays, #toClean)
     print(header)
     writeRvmLog(header)
+
+    if #toClean == 0 then
+        writeRvmLog(string.format("[%s] [RVM] IdleCleaner: nothing to dissociate", now))
+        return
+    end
 
     for _, item in ipairs(toClean) do
         local rel     = item.rel
@@ -221,6 +242,154 @@ local function onTick()
 end
 
 -- ============================================================
+-- File persistence helpers
+-- ============================================================
+-- standard_vehiclestype.lua  — clean defaults written once on each server start
+--                              (before any admin overrides are applied)
+-- vehicles_type_changes.lua  — admin overrides; survives world wipes
+-- ============================================================
+local STANDARD_FILE = "RVM/standard_vehiclestype.lua"
+local CHANGES_FILE  = "vehicles_type_changes.lua"
+
+local function saveStandardTypes()
+    local ok, RV = pcall(require, "RVVehicleTypes")
+    if not ok or not RV or not RV.VehicleTypes then return end
+    local writer = getFileWriter(STANDARD_FILE, true, false)
+    if not writer then
+        print("[RVM] saveStandardTypes: cannot open " .. STANDARD_FILE)
+        return
+    end
+    writer:write("-- RVM Default Vehicle Types (auto-generated on server start, do not edit)\n")
+    local n = 0
+    for typeKey, typeDef in pairs(RV.VehicleTypes) do
+        local scripts = typeDef.scripts or {}
+        writer:write(typeKey .. "=" .. table.concat(scripts, "|") .. "\n")
+        n = n + 1
+    end
+    local _, err = pcall(function() writer:close() end)
+    if err then print("[RVM] saveStandardTypes: close error: " .. tostring(err)) end
+    print("[RVM] saveStandardTypes: saved " .. n .. " type(s) to " .. STANDARD_FILE)
+end
+
+local function loadStandardTypes()
+    local reader = getFileReader(STANDARD_FILE, false)
+    if not reader then return nil end
+    local result = {}
+    local line = reader:readLine()
+    while line ~= nil do
+        line = line:match("^%s*(.-)%s*$") or ""
+        if line ~= "" and line:sub(1, 2) ~= "--" then
+            local key, val = line:match("^([^=]+)=(.*)$")
+            if key then
+                local scripts = {}
+                if val and val ~= "" then
+                    for s in (val .. "|"):gmatch("([^|]+)|") do
+                        table.insert(scripts, s)
+                    end
+                end
+                result[key] = scripts
+            end
+        end
+        line = reader:readLine()
+    end
+    pcall(function() reader:close() end)
+    return result
+end
+
+local function saveChangesFile(overrides)
+    local writer = getFileWriter(CHANGES_FILE, true, false)
+    if not writer then
+        print("[RVM] saveChangesFile: cannot open " .. CHANGES_FILE)
+        return
+    end
+    writer:write("-- RVM Vehicle Type Changes (admin-configured, survives wipe)\n")
+    local n = 0
+    for typeKey, changes in pairs(overrides or {}) do
+        local hasAdded   = changes.added   and #changes.added   > 0
+        local hasRemoved = changes.removed and #changes.removed > 0
+        if hasAdded then
+            writer:write(typeKey .. ".added="   .. table.concat(changes.added,   "|") .. "\n")
+            n = n + 1
+        end
+        if hasRemoved then
+            writer:write(typeKey .. ".removed=" .. table.concat(changes.removed, "|") .. "\n")
+            n = n + 1
+        end
+    end
+    pcall(function() writer:close() end)
+    print("[RVM] saveChangesFile: saved " .. n .. " override line(s) to " .. CHANGES_FILE)
+end
+
+local function loadChangesFile()
+    local reader = getFileReader(CHANGES_FILE, false)
+    if not reader then return nil end
+    local result = {}
+    local line = reader:readLine()
+    while line ~= nil do
+        line = line:match("^%s*(.-)%s*$") or ""
+        if line ~= "" and line:sub(1, 2) ~= "--" then
+            local typeKey, kind, val = line:match("^([^.]+)%.([^=]+)=(.*)$")
+            if typeKey and kind and (kind == "added" or kind == "removed") then
+                result[typeKey] = result[typeKey] or { added = {}, removed = {} }
+                if val and val ~= "" then
+                    for s in (val .. "|"):gmatch("([^|]+)|") do
+                        table.insert(result[typeKey][kind], s)
+                    end
+                end
+            end
+        end
+        line = reader:readLine()
+    end
+    pcall(function() reader:close() end)
+    return result
+end
+
+-- Applies all overrides starting from the STANDARD scripts saved at server start.
+-- Unlike applyScriptOverrides (which is incremental), this is always deterministic
+-- regardless of how many add/remove cycles were performed.
+local function applyAllOverridesClean(overrides)
+    if not overrides then return end
+    local okRV, RV = pcall(require, "RVVehicleTypes")
+    if not okRV or not RV or not RV.VehicleTypes then
+        print("[RVM] applyAllOverridesClean: RVVehicleTypes not available")
+        return
+    end
+
+    local standardTypes = loadStandardTypes() or {}
+
+    for typeKey, changes in pairs(overrides) do
+        local typeDef = RV.VehicleTypes[typeKey]
+        if typeDef then
+            local baseScripts = standardTypes[typeKey] or {}
+            local removeSet   = {}
+            for _, s in ipairs(changes.removed or {}) do removeSet[s] = true end
+
+            local result = {}
+            local seen   = {}
+            for _, s in ipairs(baseScripts) do
+                if not removeSet[s] and not seen[s] then
+                    table.insert(result, s); seen[s] = true
+                end
+            end
+            for _, s in ipairs(changes.added or {}) do
+                if not seen[s] then
+                    table.insert(result, s); seen[s] = true
+                end
+            end
+
+            typeDef.scripts = result
+            print("[RVM] applyAllOverridesClean: type=" .. typeKey
+                .. " base=" .. #baseScripts
+                .. " added=" .. #(changes.added or {})
+                .. " removed=" .. #(changes.removed or {})
+                .. " result=" .. #result)
+        else
+            print("[RVM] applyAllOverridesClean: type=" .. typeKey .. " NOT FOUND in RV.VehicleTypes")
+        end
+    end
+end
+
+-- ============================================================
 -- Bootstrap — runs once on world init
 -- ============================================================
 -- Builds the initial relationship table from whatever is already
@@ -246,6 +415,7 @@ local function bootstrap()
     end
 
     d.relationships = rels
+    d.knownVehicleScripts = nil   -- stale accumulator, no longer used
 
     -- Stamp dateLinked for any pre-existing entry that still has no date.
     -- This happens on mid-save installs: the base mod has assignments, but
@@ -280,9 +450,19 @@ local function bootstrap()
         .. " preserved=" .. preserved
         .. " posCache=" .. cached)
 
-    -- Apply script overrides persisted from previous sessions.
+    -- Save clean defaults BEFORE applying any overrides.
+    saveStandardTypes()
+    initRvmLog()
+
+    -- Load admin overrides: file takes priority (survives wipes), fall back to ModData.
+    local fileOverrides = loadChangesFile()
+    if fileOverrides then
+        local n = 0; for _ in pairs(fileOverrides) do n = n + 1 end
+        print("[RVM] bootstrap: loaded scriptOverrides from file (" .. n .. " type(s))")
+        d.scriptOverrides = fileOverrides
+    end
     if d.scriptOverrides then
-        RVM.applyScriptOverrides(d.scriptOverrides)
+        applyAllOverridesClean(d.scriptOverrides)
         local n = 0; for _ in pairs(d.scriptOverrides) do n = n + 1 end
         print("[RVM] bootstrap: applied scriptOverrides for " .. n .. " type(s)")
     end
@@ -506,6 +686,7 @@ local function broadcastAdminSync()
     local okOp, onlinePlayers = pcall(getOnlinePlayers)
     if not okOp or not onlinePlayers then return end
     local payload = buildAdminSync()
+    local sent = 0
     local it = onlinePlayers:iterator()
     while it:hasNext() do
         local p = it:next()
@@ -513,9 +694,11 @@ local function broadcastAdminSync()
             local lvl = string.lower(p:getAccessLevel() or "")
             if lvl == "admin" or lvl == "moderator" then
                 sendServerCommand(p, RVM.MODULE, "adminSync", payload)
+                sent = sent + 1
             end
         end
     end
+    print("[RVM] broadcastAdminSync: sent to " .. sent .. " admin(s)")
 end
 
 -- ============================================================
@@ -545,9 +728,7 @@ end
 -- Discovers vehicle script names from loaded world chunks and accumulates them
 -- in ModData so the list grows over time across multiple requestData calls.
 local function getAllVehicleScripts()
-    local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
-    dPos.knownVehicleScripts = dPos.knownVehicleScripts or {}
-    local known = dPos.knownVehicleScripts
+    local known = {}
 
     -- Scan currently loaded vehicles
     local okCell, cell = pcall(getCell)
@@ -568,12 +749,18 @@ local function getAllVehicleScripts()
         end
     end
 
-    -- Always include every script listed in VehicleTypes (covers all RV mods)
-    local okRV, RV = pcall(require, "RVVehicleTypes")
-    if okRV and RV and RV.VehicleTypes then
-        for _, typeDef in pairs(RV.VehicleTypes) do
-            if typeDef.scripts then
-                for _, s in ipairs(typeDef.scripts) do known[s] = true end
+    -- Use ScriptManager to get every vehicle script registered in loaded mods
+    -- (same source used by the game's "Gerar Veículo" debug panel)
+    local okSM, allTypes = pcall(function()
+        return ScriptManager.instance:getAllVehicleScripts()
+    end)
+    if okSM and allTypes then
+        local iter = allTypes:iterator()
+        while iter:hasNext() do
+            local vs = iter:next()
+            if vs then
+                local name = vs:getFullName()
+                if name then known[tostring(name)] = true end
             end
         end
     end
@@ -781,7 +968,8 @@ local function onAdminCommand(module, command, player, data)
         for _, s in ipairs(ov.added) do if s == script then found = true; break end end
         if not found then table.insert(ov.added, script) end
 
-        RVM.applyScriptOverrides(dPos.scriptOverrides)
+        applyAllOverridesClean(dPos.scriptOverrides)
+        saveChangesFile(dPos.scriptOverrides)
         print("[RVM] addVehicleScript: admin=" .. player:getUsername()
             .. " type=" .. typeKey .. " script=" .. script)
         sendServerCommand(player, RVM.MODULE, "scriptOverrideResult", { ok = true })
@@ -807,7 +995,8 @@ local function onAdminCommand(module, command, player, data)
         for _, s in ipairs(ov.removed) do if s == script then found = true; break end end
         if not found then table.insert(ov.removed, script) end
 
-        RVM.applyScriptOverrides(dPos.scriptOverrides)
+        applyAllOverridesClean(dPos.scriptOverrides)
+        saveChangesFile(dPos.scriptOverrides)
         print("[RVM] removeVehicleScript: admin=" .. player:getUsername()
             .. " type=" .. typeKey .. " script=" .. script)
         sendServerCommand(player, RVM.MODULE, "scriptOverrideResult", { ok = true })
@@ -856,21 +1045,33 @@ local function onAdminCommand(module, command, player, data)
         })
 
     elseif command == "resetScriptOverrides" then
-        if string.lower(player:getAccessLevel() or "") ~= "admin" then return end
+        local lvl = string.lower(player:getAccessLevel() or "")
+        print("[RVM] resetScriptOverrides: player=" .. player:getUsername() .. " lvl=" .. lvl)
+        if lvl ~= "admin" and lvl ~= "moderator" then return end
+
         local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
         dPos.scriptOverrides = {}
-        local okRV, RV = pcall(require, "RVVehicleTypes")
-        if okRV and RV and RV.VehicleTypes then
-            for typeKey, typeDef in pairs(RV.VehicleTypes) do
-                if _originalScripts[typeKey] then
-                    typeDef.scripts = {}
-                    for _, s in ipairs(_originalScripts[typeKey]) do
-                        table.insert(typeDef.scripts, s)
+        saveChangesFile({})  -- clear the changes file
+
+        local standardTypes = loadStandardTypes()
+        if standardTypes then
+            local okRV, RV = pcall(require, "RVVehicleTypes")
+            if okRV and RV and RV.VehicleTypes then
+                local restored = 0
+                for typeKey, scripts in pairs(standardTypes) do
+                    if RV.VehicleTypes[typeKey] then
+                        RV.VehicleTypes[typeKey].scripts = {}
+                        for _, s in ipairs(scripts) do
+                            table.insert(RV.VehicleTypes[typeKey].scripts, s)
+                        end
+                        restored = restored + 1
                     end
                 end
+                print("[RVM] resetScriptOverrides: restored " .. restored .. " type(s) from " .. STANDARD_FILE)
             end
+        else
+            print("[RVM] resetScriptOverrides: " .. STANDARD_FILE .. " not found — nothing restored")
         end
-        print("[RVM] resetScriptOverrides: admin=" .. player:getUsername() .. " — overrides cleared")
         sendServerCommand(player, RVM.MODULE, "scriptOverrideResult", { ok = true })
         broadcastAdminSync()
     end
@@ -1136,26 +1337,6 @@ end
 -- existing assignment (if any), otherwise randomly pick among
 -- matching types so a fresh auto-assignment lands in the right table.
 -- ============================================================
-
--- Snapshot of VehicleTypes.scripts captured at load time, before any
--- runtime overrides are applied.  Used by resetScriptOverrides to
--- restore the original state without reloading the module.
-local _originalScripts = {}
-do
-    local okSnap, RVsnap = pcall(require, "RVVehicleTypes")
-    if okSnap and RVsnap and RVsnap.VehicleTypes then
-        for tk, td in pairs(RVsnap.VehicleTypes) do
-            if td.scripts then
-                _originalScripts[tk] = {}
-                for _, s in ipairs(td.scripts) do
-                    table.insert(_originalScripts[tk], s)
-                end
-            end
-        end
-    end
-    local n = 0; for _ in pairs(_originalScripts) do n = n + 1 end
-    print("[RVM] _originalScripts: captured " .. n .. " type(s) at load time")
-end
 
 local _origGetInToRV = GetInToRV
 if _origGetInToRV then

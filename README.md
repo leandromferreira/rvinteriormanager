@@ -11,8 +11,9 @@ A companion admin panel for **PROJECT RV Interior** (and its expansion mods). Gi
 | PROJECT RV Interior | [3543229299](https://steamcommunity.com/sharedfiles/filedetails/?id=3543229299) |
 
 Optional but recognised:
-- RV Interior Update 1 (rvupdate)
-- RV Interior Update 2 (rvupdate2)
+- [RV Interior Expansion \[B42\]](https://steamcommunity.com/sharedfiles/filedetails/?id=3618427553)
+- [RV Interior Expansion Part 2 \[B42\]](https://steamcommunity.com/sharedfiles/filedetails/?id=3622163276)
+- [RV Military Addon \[B42\]](https://steamcommunity.com/sharedfiles/filedetails/?id=3614959302)
 
 ---
 
@@ -21,35 +22,54 @@ Optional but recognised:
 ### Admin Panel
 Open via the **RV Interior Manager** button in the Admin Panel (admin/moderator only).
 
-**Availability summary table**
-- One row per interior type (Normal, Bus, Small, Caravan, etc.)
-- Shows room dimensions, total slots, occupied, and free counts for each type
-- Click any column header to sort ascending/descending (`^` / `v` indicator)
+#### Room Types tab
+
+**Type list** (left panel)
+- One row per interior type with room dimensions (e.g. `8x4`) and slot counts (total / available / occupied)
+- Select a type to edit its compatible vehicle list on the right
+- Search field to filter types by name
+- **Restore Default** button resets all type overrides to the original mod values; changes persist across world wipes
+
+**Compatible vehicles** (right panel — shown when a type is selected)
+- Lists every vehicle script assigned to the selected type
+- Each entry shows a status badge:
+  - **Mod active** (green) — the mod that provides this vehicle is installed on the server
+  - **Mod not found** (orange) — the script is in the list but the mod is not installed; players cannot use it
+- Add a vehicle by typing its script name (`Base.ScriptName`) and clicking **Add**
+- Remove any vehicle with the **×** button
+- Changes take effect immediately — no server restart needed
+
+**Cross-search** (bottom-right)
+- Type part of any vehicle script name to see every interior type it belongs to across all installed mods
+
+> **Important:** if a vehicle is removed from all type lists while it still has a room assigned, players can no longer enter that RV. The room stays reserved until an admin **Dissociates** it from the context menu. The vehicle must be re-added to a type and re-associated before it becomes usable again.
+
+#### Linked Vehicles tab
 
 **Assignments table**
 - Lists every vehicle that currently has an interior room assigned
 - Columns: Vehicle ID · Name · Vehicle Position · RV Type · Room Position · Linked At · Last Enter · Last Exit
-- Click any column header to sort; click again to reverse
+- Click any column header to sort ascending/descending; click again to reverse
 - Hover over any cell to see the full untruncated value in a floating tooltip
 
-**Filter bar** (below the summary table)
-- Search across: Car name, Vehicle ID, RV Type, Room location, Vehicle location, Linked At date, Last Enter, Last Exit
-- Type any partial string to filter the assignments list in real time
+**Filter bar**
+- Search across: Name, Vehicle ID, RV Type, Room position, Vehicle position, Linked At, Last Enter, Last Exit
+- Type any partial string to filter in real time
 - Type `-` to find records with empty fields (e.g. vehicles never entered)
 
-**Action buttons**
+**Action buttons** (all with tooltips)
 - **Teleport to Vehicle** — teleports the admin to the vehicle's last known world position
 - **Teleport to Room** — teleports the admin into the interior room
-- **Dissociate** — frees the room assignment; the vehicle will need a new room before anyone can enter it again
+- **Dissociate** — frees the room assignment
 - **Force Idle Check** — runs the idle room cleaner immediately instead of waiting for the next hourly cycle
 
-### Manual Association (context menu)
-Right-click any supported vehicle from outside → Associate Interior:
-- **Random room** — assigns the next available slot automatically
-- **Choose room…** — opens a room picker showing all free slots for that type with:
-  - Region filter dropdown (Main / Update 1 / Update 2)
-  - Coordinate search (type any partial X / Y / Z value)
-  - Scrollable list with row selection; confirm to assign that specific room
+### Context Menu (right-click a vehicle)
+Available to admins and moderators when right-clicking a supported vehicle from outside:
+
+- **Associate RV Interior** — appears when the vehicle's script is in at least one type list and has no room assigned:
+  - **Random room** — assigns the next available slot automatically
+  - **Choose room…** — opens a picker with region filter (Main / Update 1 / Update 2), coordinate search, and a scrollable numbered list; confirm to assign a specific room
+- **Dissociate RV Interior** — appears when the vehicle has an assigned room; frees the slot regardless of whether the vehicle is still in any type list
 
 ### Sandbox Options
 
@@ -135,8 +155,8 @@ Admin right-clicks vehicle
 |---|---|
 | Workshop ID | 3704055215 |
 | Mod ID | rvinteriormanager |
-| Version | 0.2 |
-| Build | 42.16+ |
+| Version | 0.6 |
+| Build | 42.17+ |
 
 ---
 

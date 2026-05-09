@@ -2,6 +2,42 @@
 
 [hr][/hr]
 
+[h2]v0.6 — 2026-05-09[/h2]
+
+[h3]New Features[/h3]
+[list]
+[*][b]Vehicle Type Editor[/b] — new [i]Room Types[/i] tab in the admin panel. Select a type to see and edit its compatible vehicle list without restarting the server:
+[list]
+[*]Add vehicles by script name ([i]Base.ScriptName[/i]), remove with the × button
+[*][b]Mod active[/b] badge (green) — mod is installed on the server
+[*][b]Mod not found[/b] badge (orange) — script is in the list but the mod is not installed
+[*][b]Restore Default[/b] button resets all overrides to the original mod values; changes persist across world wipes
+[/list]
+[*][b]Cross-search panel[/b] — type part of a vehicle script name to instantly see every interior type it belongs to.
+[*][b]Button tooltips[/b] — all action buttons now show a tooltip on hover.
+[*][b]Size column[/b] in the type list showing room dimensions (e.g. [i]8x4[/i]).
+[/list]
+
+[h3]Bug Fixes[/h3]
+[list]
+[*][b]"Mod active" badge showing for uninstalled mods[/b] — the server was permanently accumulating all ever-seen vehicle scripts in ModData. The list is now built fresh from [i]ScriptManager[/i] on every request; mods that are no longer installed no longer appear as active.
+
+[*][b]Re-added vehicle losing its RV option[/b] — after removing a vehicle from a type and re-adding it, the "Associate" context menu option and "Enter RV" radial menu option did not reappear. Root cause: override application was incremental and left inconsistent state. Fixed with [i]applyAllOverridesClean[/i], which always rebuilds the script list from the saved standard baseline.
+
+[*][b]Context menu not reflecting script changes[/b] — [i]getRVTypeKeys[/i] was reading [i]RV.VehicleTypes[/i] through [i]require[/i], which can return a stale cached reference. The context menu now uses a dedicated [i]clientScriptsState[/i] table populated directly from the server's [i]adminSync[/i] event.
+
+[*][b]Radial menu not reflecting script changes[/b] — [i]adminSync[/i] was patching [i]RV.VehicleTypes[/i] via [i]require[/i], which could resolve to a different reference than the one the base mod uses. Fixed: the handler now patches the global [i]RV[/i] directly.
+
+[*][b]Admin panel resetting type selection on every script change[/b] — adding or removing a vehicle from a type triggered a full server refresh, resetting the selected type, scroll position, and page. Script changes no longer trigger a refresh ([i]adminSync[/i] handles the update in place); dissociate and associate refreshes now preserve the current type selection.
+[/list]
+
+[h3]Changes[/h3]
+[list]
+[*]Removed [i]showRadialMenu[/i] wrapper — it was causing crashes when the [i]Protect Vehicle[/i] mod was active. Vehicles that still have a room assigned but whose script was removed from all type lists continue to show [b]Dissociate[/b] in the context menu.
+[/list]
+
+[hr][/hr]
+
 [h2]v0.5 — 2026-04-26[/h2]
 
 [h3]Bug Fixes[/h3]
