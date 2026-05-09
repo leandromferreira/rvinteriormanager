@@ -43,6 +43,49 @@ local function buildRvUniqueIdToEngineId()
 end
 
 -- ============================================================
+-- RVM.applyScriptOverrides(overrides)
+-- ============================================================
+-- Patches VehicleTypes in memory based on stored overrides.
+-- Idempotent: safe to call multiple times with the same data.
+-- overrides shape: { [typeKey] = { added = {...}, removed = {...} } }
+-- ============================================================
+function RVM.applyScriptOverrides(overrides)
+    if not overrides then return end
+    local ok, RV = pcall(require, "RVVehicleTypes")
+    if not ok or not RV or not RV.VehicleTypes then return end
+    local VT = RV.VehicleTypes
+
+    for typeKey, changes in pairs(overrides) do
+        local typeDef = VT[typeKey]
+        if typeDef then
+            typeDef.scripts = typeDef.scripts or {}
+
+            if changes.removed and #changes.removed > 0 then
+                local removeSet = {}
+                for _, s in ipairs(changes.removed) do removeSet[s] = true end
+                local kept = {}
+                for _, s in ipairs(typeDef.scripts) do
+                    if not removeSet[s] then table.insert(kept, s) end
+                end
+                typeDef.scripts = kept
+            end
+
+            if changes.added and #changes.added > 0 then
+                local existing = {}
+                for _, s in ipairs(typeDef.scripts) do existing[s] = true end
+                for _, s in ipairs(changes.added) do
+                    if not existing[s] then
+                        table.insert(typeDef.scripts, s)
+                        existing[s] = true
+                    end
+                end
+            end
+        end
+    end
+
+end
+
+-- ============================================================
 -- RVM.readRoomData()
 -- ============================================================
 -- Returns a table indexed by typeKey.  Example:

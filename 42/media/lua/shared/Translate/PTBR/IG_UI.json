@@ -51,5 +51,14 @@
     "IGUI_RVM_Err_DissocFailed": "[RVM] Falha ao desassociar: %1",
     "IGUI_RVM_Err_AccessDenied": "[RVM] Apenas administradores podem atribuir quartos de RV neste servidor. Peça ajuda a um administrador.",
     "IGUI_RVM_VehList_SelectPrompt": "Veículos Compatíveis — selecione um tipo",
-    "IGUI_RVM_VehSearch_Placeholder": "Buscar nome do veículo..."
+    "IGUI_RVM_VehSearch_Placeholder": "Buscar nome do veículo...",
+    "IGUI_RVM_VehList_Add": "Add",
+    "IGUI_RVM_VehList_Remove": "Remover",
+    "IGUI_RVM_VehList_AddPlaceholder": "Base.NomeDoScript para adicionar...",
+    "IGUI_RVM_Tab_Types": "Tipos de Room",
+    "IGUI_RVM_Tab_Linked": "Veículos Linkados",
+    "IGUI_RVM_Unalloc_Title": "Veículos Sem Tipo",
+    "IGUI_RVM_Unalloc_Empty": "Nenhum veículo sem tipo",
+    "IGUI_RVM_Btn_ResetTypes": "Resetar para Padrão",
+    "IGUI_RVM_Picker_Col_Type": "Tipo"
 }

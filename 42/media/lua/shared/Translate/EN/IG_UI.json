@@ -51,5 +51,14 @@
     "IGUI_RVM_Err_DissocFailed": "[RVM] Dissociate failed: %1",
     "IGUI_RVM_Err_AccessDenied": "[RVM] Only admins can assign RV rooms on this server. Ask an admin for help.",
     "IGUI_RVM_VehList_SelectPrompt": "Compatible Vehicles — select a type",
-    "IGUI_RVM_VehSearch_Placeholder": "Search vehicle name..."
+    "IGUI_RVM_VehSearch_Placeholder": "Search vehicle name...",
+    "IGUI_RVM_VehList_Add": "Add",
+    "IGUI_RVM_VehList_Remove": "Remove",
+    "IGUI_RVM_VehList_AddPlaceholder": "Base.ScriptName to add...",
+    "IGUI_RVM_Tab_Types": "Room Types",
+    "IGUI_RVM_Tab_Linked": "Linked Vehicles",
+    "IGUI_RVM_Unalloc_Title": "Unallocated Vehicles",
+    "IGUI_RVM_Unalloc_Empty": "No unallocated vehicles",
+    "IGUI_RVM_Btn_ResetTypes": "Reset to Default",
+    "IGUI_RVM_Picker_Col_Type": "Type"
 }

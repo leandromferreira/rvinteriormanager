@@ -280,6 +280,13 @@ local function bootstrap()
         .. " preserved=" .. preserved
         .. " posCache=" .. cached)
 
+    -- Apply script overrides persisted from previous sessions.
+    if d.scriptOverrides then
+        RVM.applyScriptOverrides(d.scriptOverrides)
+        local n = 0; for _ in pairs(d.scriptOverrides) do n = n + 1 end
+        print("[RVM] bootstrap: applied scriptOverrides for " .. n .. " type(s)")
+    end
+
     Events.OnTick.Add(onTick)
 
     -- Run idle cleanup once on world load (in addition to the periodic hourly check).
@@ -424,12 +431,92 @@ local function onClientCommand(module, command, player, data)
             d.relationships[capturedRvId][capturedField] = capturedDate
         end
 
+        -- If this enterRV created a brand-new assignment (base mod auto-assigned a room),
+        -- notify the entering client so their local ModData stays in sync and the context
+        -- menu switches to "Dissociate" immediately without waiting for a ModData sync cycle.
+        if capturedField == "lastEnterDate" and capturedRvId then
+            local rel = d.relationships[capturedRvId]
+            if rel and not savedDates[capturedRvId] then
+                local notifData = {
+                    rvVehicleUniqueId = capturedRvId,
+                    typeKey           = rel.typeKey,
+                    room              = rel.room,
+                }
+                -- Broadcast to all admins/moderators so their context menus stay
+                -- in sync even when a different player triggered the auto-assign.
+                local sent = false
+                local okOp, onlinePlayers = pcall(getOnlinePlayers)
+                if okOp and onlinePlayers then
+                    local it = onlinePlayers:iterator()
+                    while it:hasNext() do
+                        local p = it:next()
+                        if p then
+                            local lvl = string.lower(p:getAccessLevel() or "")
+                            if lvl == "admin" or lvl == "moderator" then
+                                sendServerCommand(p, RVM.MODULE, "vehicleAssigned", notifData)
+                                sent = true
+                            end
+                        end
+                    end
+                end
+                if not sent then
+                    sendServerCommand(player, RVM.MODULE, "vehicleAssigned", notifData)
+                end
+            end
+        end
+
         Events.OnTick.Remove(rebuild)
     end
     Events.OnTick.Add(rebuild)
 end
 
 Events.OnClientCommand.Add(onClientCommand)
+
+-- ============================================================
+-- buildAdminSync() — lightweight payload sent to admins on connect
+-- ============================================================
+-- Contains only what the context menu needs: current scripts per type
+-- and a flat rvId→{typeKey,room} map of all assignments.
+-- ============================================================
+local function buildAdminSync()
+    local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
+
+    local scriptsState = {}
+    local okRV, RV = pcall(require, "RVVehicleTypes")
+    if okRV and RV and RV.VehicleTypes then
+        for tk, td in pairs(RV.VehicleTypes) do
+            local copy = {}
+            for _, s in ipairs(td.scripts or {}) do table.insert(copy, s) end
+            scriptsState[tk] = copy
+        end
+    end
+
+    local assignments = {}
+    for rvId, rel in pairs(dPos.relationships or {}) do
+        if rel.typeKey and rel.room then
+            assignments[tostring(rvId)] = { typeKey = rel.typeKey, room = rel.room }
+        end
+    end
+
+    return { scriptsState = scriptsState, assignments = assignments }
+end
+
+-- Broadcasts the sync payload to every online admin/moderator.
+local function broadcastAdminSync()
+    local okOp, onlinePlayers = pcall(getOnlinePlayers)
+    if not okOp or not onlinePlayers then return end
+    local payload = buildAdminSync()
+    local it = onlinePlayers:iterator()
+    while it:hasNext() do
+        local p = it:next()
+        if p then
+            local lvl = string.lower(p:getAccessLevel() or "")
+            if lvl == "admin" or lvl == "moderator" then
+                sendServerCommand(p, RVM.MODULE, "adminSync", payload)
+            end
+        end
+    end
+end
 
 -- ============================================================
 -- Request/response handler — admin panel data
@@ -455,6 +542,48 @@ Events.OnClientCommand.Add(onClientCommand)
 --       },
 --   }
 -- ============================================================
+-- Discovers vehicle script names from loaded world chunks and accumulates them
+-- in ModData so the list grows over time across multiple requestData calls.
+local function getAllVehicleScripts()
+    local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
+    dPos.knownVehicleScripts = dPos.knownVehicleScripts or {}
+    local known = dPos.knownVehicleScripts
+
+    -- Scan currently loaded vehicles
+    local okCell, cell = pcall(getCell)
+    if okCell and cell then
+        local okVeh, vehicles = pcall(function() return cell:getVehicles() end)
+        if okVeh and vehicles then
+            local iter = vehicles:iterator()
+            while iter:hasNext() do
+                local v = iter:next()
+                if v then
+                    local s = v:getScript()
+                    if s then
+                        local name = s:getFullName()
+                        if name then known[tostring(name)] = true end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Always include every script listed in VehicleTypes (covers all RV mods)
+    local okRV, RV = pcall(require, "RVVehicleTypes")
+    if okRV and RV and RV.VehicleTypes then
+        for _, typeDef in pairs(RV.VehicleTypes) do
+            if typeDef.scripts then
+                for _, s in ipairs(typeDef.scripts) do known[s] = true end
+            end
+        end
+    end
+
+    local names = {}
+    for name in pairs(known) do table.insert(names, name) end
+    table.sort(names)
+    return names
+end
+
 local function buildResponse()
     local roomData = RVM.readRoomData()
     if not roomData then return nil end
@@ -464,6 +593,7 @@ local function buildResponse()
     local rels     = d.relationships or {}
     local summary  = {}
     local assignments = {}
+    local seenRvIds = {}   -- deduplication guard: one row per vehicle
 
     print("[RVM] buildResponse: building response, relationships stored=" .. (function()
         local n = 0; for _ in pairs(rels) do n = n + 1 end; return n
@@ -481,6 +611,11 @@ local function buildResponse()
         for _, room in ipairs(typeInfo.rooms) do
             if room.rvVehicleUniqueId then
                 local rvId = room.rvVehicleUniqueId
+                if seenRvIds[rvId] then
+                    print("[RVM]   SKIP duplicate rvId=" .. rvId .. " type=" .. typeKey)
+                    -- fall through to next room
+                else
+                seenRvIds[rvId] = true
                 local rel  = rels[rvId] or {}
 
                 -- Use live name from loaded chunk, fall back to cached name in relationship.
@@ -511,18 +646,41 @@ local function buildResponse()
                     lastEnterDate     = rel.lastEnterDate,
                     lastOutDate       = rel.lastOutDate,
                 })
+                end  -- else (not seenRvIds)
             end
         end
     end
 
     print("[RVM] buildResponse: total assignments=" .. #assignments)
-    return { summary = summary, assignments = assignments }
+    local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
+
+    -- Send the authoritative current scripts per type so the client can sync
+    -- without relying on applyScriptOverrides (needed after reset).
+    local scriptsState = {}
+    local okRV2, RV2 = pcall(require, "RVVehicleTypes")
+    if okRV2 and RV2 and RV2.VehicleTypes then
+        for tk, td in pairs(RV2.VehicleTypes) do
+            local copy = {}
+            for _, s in ipairs(td.scripts or {}) do table.insert(copy, s) end
+            scriptsState[tk] = copy
+        end
+    end
+
+    return { summary = summary, assignments = assignments,
+             scriptOverrides = dPos.scriptOverrides or {},
+             allVehicleScripts = getAllVehicleScripts(),
+             scriptsState = scriptsState }
 end
 
 local function onAdminCommand(module, command, player, data)
     if module ~= RVM.MODULE then return end
 
-    if command == "requestData" then
+    if command == "requestAdminSync" then
+        local lvl = string.lower(player:getAccessLevel() or "")
+        if lvl ~= "admin" and lvl ~= "moderator" then return end
+        sendServerCommand(player, RVM.MODULE, "adminSync", buildAdminSync())
+
+    elseif command == "requestData" then
         local lvl = string.lower(player:getAccessLevel() or "")
         if lvl ~= "admin" and lvl ~= "moderator" then
             return
@@ -539,7 +697,9 @@ local function onAdminCommand(module, command, player, data)
         local d2  = ModData.getOrCreate(RVM.POS_DATA_KEY)
         local rel = d2.relationships and d2.relationships[tostring(rvId or "")]
         local dissTypeKey = rel and rel.typeKey
-        local ok, err = RVMServer.dissociate(rvId)
+        local ok, err, resolvedTypeKey = RVMServer.dissociate(rvId)
+        -- resolvedTypeKey may come from AssignedRooms scan when rel was missing
+        dissTypeKey = dissTypeKey or resolvedTypeKey
         local now   = os.date("%d/%m/%Y %H:%M")
         local admin = player:getUsername() or "?"
         if ok then
@@ -553,6 +713,21 @@ local function onAdminCommand(module, command, player, data)
                 now, admin, tostring(rvId or "?"), name, tostring(dissTypeKey or "?"), roomStr, vposStr)
             print(msg)
             writeRvmLog(msg)
+            -- Broadcast to all admins so their context menus update immediately.
+            local notifData = { rvVehicleUniqueId = tostring(rvId or ""), typeKey = dissTypeKey }
+            local okOp, onlinePlayers = pcall(getOnlinePlayers)
+            if okOp and onlinePlayers then
+                local it = onlinePlayers:iterator()
+                while it:hasNext() do
+                    local p = it:next()
+                    if p then
+                        local lvl = string.lower(p:getAccessLevel() or "")
+                        if lvl == "admin" or lvl == "moderator" then
+                            sendServerCommand(p, RVM.MODULE, "vehicleDissociated", notifData)
+                        end
+                    end
+                end
+            end
         else
             print(string.format("[%s] [RVM] DISSOCIATE FAILED  admin=%s  rvId=%s  err=%s",
                 now, admin, tostring(rvId or "?"), tostring(err or "?")))
@@ -567,10 +742,12 @@ local function onAdminCommand(module, command, player, data)
         local pos         = data and data.vehicleWorldPos
         local vehicleName = data and data.vehicleName
         local selRoom     = data and data.selectedRoom
-        local room, err = RVMServer.associate(rvId, typeKey, pos, vehicleName, selRoom)
+        local room, err, existingTypeKey, existingRoom = RVMServer.associate(rvId, typeKey, pos, vehicleName, selRoom)
         sendServerCommand(player, RVM.MODULE, "associateResult",
             { ok = room ~= nil, err = err, rvVehicleUniqueId = rvId,
-              typeKey = typeKey, room = room })
+              typeKey = typeKey, room = room,
+              existingTypeKey = existingTypeKey,
+              existingRoom    = existingRoom })
 
     elseif command == "forceIdleCheck" then
         local lvl = string.lower(player:getAccessLevel() or "")
@@ -579,40 +756,123 @@ local function onAdminCommand(module, command, player, data)
         checkIdleRooms()
         sendServerCommand(player, RVM.MODULE, "idleCheckResult", { ok = true })
 
+    elseif command == "addVehicleScript" then
+        if string.lower(player:getAccessLevel() or "") ~= "admin" then return end
+        local typeKey = data and data.typeKey
+        local script  = data and data.script
+        if not typeKey or not script or script == "" then return end
+
+        local okRV, RV = pcall(require, "RVVehicleTypes")
+        if not okRV or not RV or not RV.VehicleTypes then return end
+
+        local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
+        dPos.scriptOverrides = dPos.scriptOverrides or {}
+
+        -- Add to the target type (a script may belong to multiple types simultaneously)
+        dPos.scriptOverrides[typeKey] = dPos.scriptOverrides[typeKey]
+            or { added = {}, removed = {} }
+        local ov = dPos.scriptOverrides[typeKey]
+        -- Un-remove if it was previously removed from this type
+        for i = #ov.removed, 1, -1 do
+            if ov.removed[i] == script then table.remove(ov.removed, i); break end
+        end
+        -- Add to "added" list if not already present
+        local found = false
+        for _, s in ipairs(ov.added) do if s == script then found = true; break end end
+        if not found then table.insert(ov.added, script) end
+
+        RVM.applyScriptOverrides(dPos.scriptOverrides)
+        print("[RVM] addVehicleScript: admin=" .. player:getUsername()
+            .. " type=" .. typeKey .. " script=" .. script)
+        sendServerCommand(player, RVM.MODULE, "scriptOverrideResult", { ok = true })
+        broadcastAdminSync()
+
+    elseif command == "removeVehicleScript" then
+        if string.lower(player:getAccessLevel() or "") ~= "admin" then return end
+        local typeKey = data and data.typeKey
+        local script  = data and data.script
+        if not typeKey or not script or script == "" then return end
+
+        local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
+        dPos.scriptOverrides = dPos.scriptOverrides or {}
+        dPos.scriptOverrides[typeKey] = dPos.scriptOverrides[typeKey] or { added = {}, removed = {} }
+        local ov = dPos.scriptOverrides[typeKey]
+
+        -- Remove from "added" list if present
+        for i = #ov.added, 1, -1 do
+            if ov.added[i] == script then table.remove(ov.added, i); break end
+        end
+        -- Add to "removed" list if not already present
+        local found = false
+        for _, s in ipairs(ov.removed) do if s == script then found = true; break end end
+        if not found then table.insert(ov.removed, script) end
+
+        RVM.applyScriptOverrides(dPos.scriptOverrides)
+        print("[RVM] removeVehicleScript: admin=" .. player:getUsername()
+            .. " type=" .. typeKey .. " script=" .. script)
+        sendServerCommand(player, RVM.MODULE, "scriptOverrideResult", { ok = true })
+        broadcastAdminSync()
+
     elseif command == "getFreeRooms" then
         local lvl = string.lower(player:getAccessLevel() or "")
         if lvl ~= "admin" and lvl ~= "moderator" then return end
-        local typeKey = data and data.typeKey
-        if not typeKey then return end
+        -- Accept either typeKeys (array) or legacy single typeKey
+        local typeKeys = data and data.typeKeys
+        if not typeKeys and data and data.typeKey then typeKeys = { data.typeKey } end
+        if not typeKeys or #typeKeys == 0 then return end
         local ok, RV = pcall(require, "RVVehicleTypes")
         if not ok or not RV or not RV.VehicleTypes then return end
-        local typeDef = RV.VehicleTypes[typeKey]
-        if not typeDef then return end
-        local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
-        local dataKey = (typeKey == "normal") and "AssignedRooms"
-                                              or  ("AssignedRooms" .. typeKey)
-        local assigned = base[dataKey] or {}
-        local occupied = {}
-        for _, roomCoords in pairs(assigned) do
-            local k = string.format("%d-%d-%d",
-                roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
-            occupied[k] = true
-        end
+        local base = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
         local free = {}
-        for idx, roomCoords in ipairs(typeDef.rooms or {}) do
-            local k = string.format("%d-%d-%d",
-                roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
-            if not occupied[k] then
-                table.insert(free, { index = idx,
-                    x = roomCoords.x, y = roomCoords.y, z = roomCoords.z })
+        for _, tk in ipairs(typeKeys) do
+            local typeDef = RV.VehicleTypes[tk]
+            if typeDef then
+                local dataKey  = (tk == "normal") and "AssignedRooms" or ("AssignedRooms" .. tk)
+                local assigned = base[dataKey] or {}
+                local occupied = {}
+                for _, roomCoords in pairs(assigned) do
+                    local k = string.format("%d-%d-%d",
+                        roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
+                    occupied[k] = true
+                end
+                for idx, roomCoords in ipairs(typeDef.rooms or {}) do
+                    local k = string.format("%d-%d-%d",
+                        roomCoords.x or 0, roomCoords.y or 0, roomCoords.z or 0)
+                    if not occupied[k] then
+                        table.insert(free, {
+                            index  = idx,
+                            x      = roomCoords.x, y = roomCoords.y, z = roomCoords.z,
+                            typeKey = tk,
+                            roomW  = typeDef.roomWidth,
+                            roomH  = typeDef.roomHeight,
+                        })
+                    end
+                end
             end
         end
         sendServerCommand(player, RVM.MODULE, "freeRoomsResponse", {
-            typeKey = typeKey,
-            rooms   = free,
-            roomW   = typeDef.roomWidth,
-            roomH   = typeDef.roomHeight,
+            typeKeys = typeKeys,
+            rooms    = free,
         })
+
+    elseif command == "resetScriptOverrides" then
+        if string.lower(player:getAccessLevel() or "") ~= "admin" then return end
+        local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
+        dPos.scriptOverrides = {}
+        local okRV, RV = pcall(require, "RVVehicleTypes")
+        if okRV and RV and RV.VehicleTypes then
+            for typeKey, typeDef in pairs(RV.VehicleTypes) do
+                if _originalScripts[typeKey] then
+                    typeDef.scripts = {}
+                    for _, s in ipairs(_originalScripts[typeKey]) do
+                        table.insert(typeDef.scripts, s)
+                    end
+                end
+            end
+        end
+        print("[RVM] resetScriptOverrides: admin=" .. player:getUsername() .. " — overrides cleared")
+        sendServerCommand(player, RVM.MODULE, "scriptOverrideResult", { ok = true })
+        broadcastAdminSync()
     end
 end
 
@@ -636,13 +896,37 @@ function RVMServer.dissociate(rvVehicleUniqueId)  ---@param rvVehicleUniqueId st
     local d    = ModData.getOrCreate(RVM.POS_DATA_KEY)
     local rel  = d.relationships and d.relationships[rvId]
 
-    if not rel then
-        return false, "no relationship found for rvId " .. rvId
+    local dataKey, foundTypeKey
+    if rel then
+        dataKey      = rel.dataKey
+        foundTypeKey = rel.typeKey
+    else
+        -- Relationship not in our table (e.g. assigned before our mod was
+        -- installed, or rebuild() missed the event).  Scan AssignedRooms
+        -- directly so the admin can still clear stale assignments.
+        local okRV, RV = pcall(require, "RVVehicleTypes")
+        if okRV and RV and RV.VehicleTypes then
+            local base2 = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+            local numId = tonumber(rvId)
+            for tk, _ in pairs(RV.VehicleTypes) do
+                local dk = (tk == "normal") and "AssignedRooms" or ("AssignedRooms" .. tk)
+                if base2[dk] and (base2[dk][rvId] or (numId and base2[dk][numId])) then
+                    dataKey      = dk
+                    foundTypeKey = tk
+                    break
+                end
+            end
+        end
+        if not dataKey then
+            return false, "no relationship found for rvId " .. rvId
+        end
+        print("[RVM] dissociate: rvId=" .. rvId
+            .. " not in relationships; cleared via AssignedRooms scan type=" .. tostring(foundTypeKey))
     end
 
     -- Remove from the base mod's assigned-rooms table.
-    local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
-    local assigned = base[rel.dataKey]
+    local base     = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+    local assigned = base[dataKey]
     if assigned then
         local numRvId = tonumber(rvId)
         assigned[rvId]              = nil
@@ -657,11 +941,11 @@ function RVMServer.dissociate(rvVehicleUniqueId)  ---@param rvVehicleUniqueId st
     end
 
     -- Remove from our relationship table and caches.
-    d.relationships[rvId] = nil
-    posCache[rvId]        = nil
-    dirtySet[rvId]        = nil
+    if d.relationships then d.relationships[rvId] = nil end
+    posCache[rvId] = nil
+    dirtySet[rvId] = nil
 
-    return true
+    return true, nil, foundTypeKey
 end
 
 -- ============================================================
@@ -708,9 +992,17 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos, vehicl
         base[dataKey][numId] = nil
     end
 
-    -- Reject if already assigned (check both string and numeric key).
-    if base[dataKey][rvId] or (numId and base[dataKey][numId]) then
-        return nil, "vehicle " .. rvId .. " already has a room assigned"
+    -- Reject if already assigned in ANY type (prevents duplicate assignments when
+    -- the vehicle is in multiple scripts lists).
+    -- Returns existingTypeKey + existingRoom as extra values so the caller can
+    -- propagate them to the client for ModData re-sync.
+    for tk, _ in pairs(RV.VehicleTypes) do
+        local dk = (tk == "normal") and "AssignedRooms" or ("AssignedRooms" .. tk)
+        if base[dk] and (base[dk][rvId] or (numId and base[dk][numId])) then
+            local existingRoom = base[dk][rvId] or (numId and base[dk][numId])
+            return nil, "vehicle " .. rvId .. " already has a room assigned (type: " .. tk .. ")",
+                   tk, existingRoom
+        end
     end
 
     -- Build occupied set.
@@ -785,8 +1077,11 @@ function RVMServer.associate(rvVehicleUniqueId, typeKey, vehicleWorldPos, vehicl
                                 matched = true  -- no scripts list: trust position alone
                             end
                             if matched then
-                                v:getModData().projectRV_uniqueId = rvId
+                                local vmd = v:getModData()
+                                vmd.projectRV_uniqueId = rvId
+                                vmd.projectRV_type     = typeKey
                                 print("[RVM] associate: set projectRV_uniqueId=" .. rvId
+                                    .. " projectRV_type=" .. typeKey
                                     .. " on server vehicle " .. vScript)
                                 break
                             end
@@ -836,61 +1131,180 @@ end
 -- module-load time to intercept entry attempts BEFORE the player
 -- is teleported into the room.
 --
--- When RequireAdminToAssociate is enabled and the vehicle has no
--- pre-assigned room, non-admin players are denied entry and receive
--- an accessDenied message — the base mod's GetInToRV is never called
--- so no teleport occurs and the player stays where they are.
+-- Also corrects projectRV_type on entry: since a vehicle may now
+-- belong to multiple types, we pick the type that already has an
+-- existing assignment (if any), otherwise randomly pick among
+-- matching types so a fresh auto-assignment lands in the right table.
 -- ============================================================
+
+-- Snapshot of VehicleTypes.scripts captured at load time, before any
+-- runtime overrides are applied.  Used by resetScriptOverrides to
+-- restore the original state without reloading the module.
+local _originalScripts = {}
+do
+    local okSnap, RVsnap = pcall(require, "RVVehicleTypes")
+    if okSnap and RVsnap and RVsnap.VehicleTypes then
+        for tk, td in pairs(RVsnap.VehicleTypes) do
+            if td.scripts then
+                _originalScripts[tk] = {}
+                for _, s in ipairs(td.scripts) do
+                    table.insert(_originalScripts[tk], s)
+                end
+            end
+        end
+    end
+    local n = 0; for _ in pairs(_originalScripts) do n = n + 1 end
+    print("[RVM] _originalScripts: captured " .. n .. " type(s) at load time")
+end
+
 local _origGetInToRV = GetInToRV
 if _origGetInToRV then
     GetInToRV = function(player, vehicle)
-        -- Only restrict on dedicated servers.
-        -- In SP, isClient() returns true on the server side, so we always allow.
-        if not isClient() then
-            local svars = SandboxVars and SandboxVars.RVM
-            local requireAdmin = (svars ~= nil and svars.RequireAdminToAssociate == true)
+        -- Only active on dedicated servers (isClient() is true on the host side in SP/listen).
+        if not isClient() and vehicle then
+            local okRV, RV = pcall(require, "RVVehicleTypes")
+            if okRV and RV and RV.VehicleTypes then
+                local script = vehicle:getScript()
+                local vehicleScriptName = script and tostring(script:getFullName()) or nil
+                local vmd        = vehicle:getModData()
+                local rvUniqueId = vmd and vmd.projectRV_uniqueId
+                local oldType    = vmd and vmd.projectRV_type
 
-            if requireAdmin and vehicle then
-                local okRV, RV = pcall(require, "RVVehicleTypes")
-                if okRV and RV and RV.VehicleTypes then
-                    local vehicleScriptName = tostring(vehicle:getScript():getFullName())
-
-                    -- Find typeKey for this vehicle script.
-                    local typeKey = nil
-                    for key, def in pairs(RV.VehicleTypes) do
+                -- Collect every typeKey this vehicle's script belongs to.
+                local matchingTypes = {}
+                if vehicleScriptName then
+                    for tk, def in pairs(RV.VehicleTypes) do
                         if def.scripts then
                             for _, s in ipairs(def.scripts) do
-                                if s == vehicleScriptName then typeKey = key; break end
+                                if s == vehicleScriptName then
+                                    table.insert(matchingTypes, tk); break
+                                end
                             end
                         end
-                        if typeKey then break end
+                    end
+                end
+
+                if #matchingTypes > 0 then
+                    local base  = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+                    local strId = rvUniqueId and tostring(rvUniqueId)
+                    local numId = rvUniqueId and tonumber(rvUniqueId)
+
+                    -- Prefer the typeKey recorded in our own relationships (explicitly
+                    -- assigned by an admin via this mod) over scanning AssignedRooms.
+                    -- The base mod's gen/OnTick can auto-assign rooms in OTHER matching
+                    -- types, which would otherwise cause non-deterministic behaviour.
+                    local assignedTypeKey = nil
+                    if strId then
+                        local dPos = ModData.getOrCreate(RVM.POS_DATA_KEY)
+                        local rel  = dPos.relationships and dPos.relationships[strId]
+                        if rel and rel.typeKey then
+                            -- Verify the recorded type actually has a room entry.
+                            local relDk = (rel.typeKey == "normal") and "AssignedRooms"
+                                                                     or ("AssignedRooms" .. rel.typeKey)
+                            local relA  = base[relDk]
+                            if relA and (relA[strId] or (numId and relA[numId])) then
+                                assignedTypeKey = rel.typeKey
+                            end
+                        end
                     end
 
-                    if typeKey then
-                        local base       = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
-                        local assignedKey = (typeKey == "normal") and "AssignedRooms"
-                                                                   or  ("AssignedRooms" .. typeKey)
-                        local vmd       = vehicle:getModData()
-                        local vehicleId = vmd and vmd.projectRV_uniqueId
-                        local strId     = vehicleId and tostring(vehicleId)
-                        local numId     = vehicleId and tonumber(vehicleId)
-                        local assigned  = base[assignedKey]
-                        local hasRoom   = assigned and strId and (
-                            assigned[strId] or (numId and assigned[numId])
-                        )
-
-                        if not hasRoom then
-                            -- No room assigned yet; base mod would auto-assign one.
-                            -- Block non-admin players.
-                            local lvl = string.lower(player:getAccessLevel() or "")
-                            if lvl ~= "admin" and lvl ~= "moderator" then
-                                print("[RVM] Sandbox: blocking entry for non-admin '"
-                                    .. player:getUsername()
-                                    .. "' — vehicle " .. tostring(strId) .. " has no assigned room")
-                                sendServerCommand(player, RVM.MODULE, "accessDenied", {})
-                                return   -- player stays where they are
+                    -- Fall back to scanning AssignedRooms when our relationships don't
+                    -- have an entry (e.g. assigned before this mod was installed).
+                    if not assignedTypeKey and strId then
+                        for _, tk in ipairs(matchingTypes) do
+                            local dk = (tk == "normal") and "AssignedRooms" or ("AssignedRooms" .. tk)
+                            local a  = base[dk]
+                            if a and (a[strId] or (numId and a[numId])) then
+                                assignedTypeKey = tk; break
                             end
                         end
+                    end
+
+                    -- If the vehicle has assignments in multiple types (base mod gen
+                    -- auto-assigned extra types), clear the extras so the base mod can
+                    -- only find the one we want it to use.
+                    if assignedTypeKey and strId and #matchingTypes > 1 then
+                        for _, tk in ipairs(matchingTypes) do
+                            if tk ~= assignedTypeKey then
+                                local dk = (tk == "normal") and "AssignedRooms" or ("AssignedRooms" .. tk)
+                                if base[dk] then
+                                    base[dk][strId] = nil
+                                    if numId then base[dk][numId] = nil end
+                                end
+                            end
+                        end
+                    end
+
+                    -- Use the assigned type; if none, randomly pick among matching types
+                    -- (the base mod will auto-assign a room from whichever type we land on).
+                    local typeKey = assignedTypeKey
+                    if not typeKey then
+                        typeKey = matchingTypes[ZombRand(#matchingTypes) + 1]
+                    end
+
+                    print("[RVM] GetInToRV: script=" .. tostring(vehicleScriptName)
+                        .. " rvId=" .. tostring(rvUniqueId)
+                        .. " oldType=" .. tostring(oldType)
+                        .. " matching=" .. #matchingTypes
+                        .. " assigned=" .. tostring(assignedTypeKey)
+                        .. " final=" .. tostring(typeKey))
+
+                    vmd.projectRV_type = typeKey
+
+                    -- Sandbox enforcement: block non-admins from auto-assigning a room.
+                    local svars = SandboxVars and SandboxVars.RVM
+                    local requireAdmin = (svars ~= nil and svars.RequireAdminToAssociate == true)
+                    if requireAdmin then
+                        local base        = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+                        local assignedKey = (typeKey == "normal") and "AssignedRooms"
+                                                                   or  ("AssignedRooms" .. typeKey)
+                        local vehicleId   = vmd.projectRV_uniqueId
+                        local strId       = vehicleId and tostring(vehicleId)
+                        local numId       = vehicleId and tonumber(vehicleId)
+                        local a2          = base[assignedKey]
+                        local hasRoom     = a2 and strId and (a2[strId] or (numId and a2[numId]))
+
+                        if not hasRoom then
+                            local lvl = string.lower(player:getAccessLevel() or "")
+                            if lvl ~= "admin" and lvl ~= "moderator" then
+                                print("[RVM] Sandbox: blocking non-admin '"
+                                    .. player:getUsername() .. "' — no room assigned")
+                                sendServerCommand(player, RVM.MODULE, "accessDenied", {})
+                                return
+                            end
+                        end
+                    end
+
+                    -- Temporarily hide the vehicle script from all non-target types so
+                    -- that the base mod's getVehicleTypeKeyByScript() (which uses pairs()
+                    -- with non-deterministic iteration order) can only find typeKey.
+                    if #matchingTypes > 1 and vehicleScriptName then
+                        local VT          = RV.VehicleTypes
+                        local savedScripts = {}
+                        for _, tk in ipairs(matchingTypes) do
+                            if tk ~= typeKey then
+                                local td = VT[tk]
+                                if td and td.scripts then
+                                    savedScripts[tk] = td.scripts
+                                    local filtered = {}
+                                    for _, s in ipairs(td.scripts) do
+                                        if s ~= vehicleScriptName then
+                                            table.insert(filtered, s)
+                                        end
+                                    end
+                                    td.scripts = filtered
+                                end
+                            end
+                        end
+
+                        _origGetInToRV(player, vehicle)
+
+                        for _, tk in ipairs(matchingTypes) do
+                            if tk ~= typeKey and savedScripts[tk] then
+                                VT[tk].scripts = savedScripts[tk]
+                            end
+                        end
+                        return
                     end
                 end
             end
@@ -898,5 +1312,7 @@ if _origGetInToRV then
 
         _origGetInToRV(player, vehicle)
     end
+else
+    print("[RVM] WARNING: GetInToRV not found at load time — base mod may not be loaded yet")
 end
 

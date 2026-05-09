@@ -6,6 +6,12 @@ if isServer() then return end
 
 require("RVMShared")
 
+-- Cache tables declared here so all functions below can access them.
+-- freeRoomCache: right-click pre-fetch of free rooms per typeKey combo
+-- assignmentCache: server-authoritative rvId→{typeKey,room} state
+local freeRoomCache   = {}
+local assignmentCache = {}
+
 -- ============================================================
 -- Helpers
 -- ============================================================
@@ -15,39 +21,48 @@ local function isAdmin(player)
     return level == "admin" or level == "moderator"
 end
 
--- Returns the typeKey for a vehicle, or nil if it is not a
--- supported RV type.
-local function getRVTypeKey(vehicle)
+-- Returns all typeKeys a vehicle's script belongs to (may be multiple).
+local function getRVTypeKeys(vehicle)
     local ok, RV = pcall(require, "RVVehicleTypes")
-    if not ok or not RV or not RV.VehicleTypes then return nil end
-
-    local scriptName = tostring(vehicle:getScript():getFullName())
+    if not ok or not RV or not RV.VehicleTypes then return {} end
+    local script = vehicle:getScript()
+    if not script then return {} end
+    local scriptName = tostring(script:getFullName())
+    local typeKeys = {}
     for typeKey, typeDef in pairs(RV.VehicleTypes) do
         if typeDef.scripts then
             for _, s in ipairs(typeDef.scripts) do
-                if s == scriptName then return typeKey end
+                if s == scriptName then table.insert(typeKeys, typeKey); break end
             end
         end
     end
-    return nil
+    return typeKeys
 end
 
--- Returns the rvVehicleUniqueId assigned to this vehicle, or nil.
--- Checks both the string key ("12345") and numeric key (12345) because the base
--- mod may store assignments under a numeric key while we normalise to strings.
-local function getAssignedRvId(vehicle, typeKey)
+-- Returns (rvId, typeKey) if the vehicle has an assigned room in ANY type table,
+-- or (nil, nil) if it has no assignment.
+-- Checks the server-synced assignmentCache first, then falls back to local ModData.
+local function getAssignedRvId(vehicle)
     local uid = vehicle:getModData().projectRV_uniqueId
-    if not uid then return nil end
-    local rvId    = tostring(uid)
-    local numId   = tonumber(uid)
-    local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
-    local dataKey = (typeKey == "normal") and "AssignedRooms"
-                                          or  ("AssignedRooms" .. typeKey)
-    local assigned = base[dataKey]
-    if assigned and (assigned[rvId] or (numId and assigned[numId])) then
-        return rvId
+    if not uid then return nil, nil end
+    local rvId = tostring(uid)
+
+    if assignmentCache[rvId] then
+        return rvId, assignmentCache[rvId].typeKey
     end
-    return nil
+
+    local numId = tonumber(uid)
+    local base  = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+    local ok, RV = pcall(require, "RVVehicleTypes")
+    if not ok or not RV or not RV.VehicleTypes then return nil, nil end
+    for typeKey, _ in pairs(RV.VehicleTypes) do
+        local dataKey  = (typeKey == "normal") and "AssignedRooms" or ("AssignedRooms" .. typeKey)
+        local assigned = base[dataKey]
+        if assigned and (assigned[rvId] or (numId and assigned[numId])) then
+            return rvId, typeKey
+        end
+    end
+    return nil, nil
 end
 
 -- Returns the room dimensions (tiles) for the given typeKey, or nil if not defined.
@@ -125,10 +140,11 @@ local function styleBtn(btn, c)
     btn.textColor                = { r=T.text.r, g=T.text.g, b=T.text.b, a=1 }
 end
 
-function RVMRoomPicker:new(typeKey, vehicle, roomW, roomH)
+-- typeKeys: array of typeKey strings; vehicle: the vehicle object
+function RVMRoomPicker:new(typeKeys, vehicle)
     local sw  = getCore():getScreenWidth()
     local sh  = getCore():getScreenHeight()
-    local rpW = math.floor(sw * 0.26)
+    local rpW = math.floor(sw * 0.30)
     local rpH = math.floor(sh * 0.46)
     local o   = ISPanel.new(self,
         math.floor((sw - rpW) / 2),
@@ -139,11 +155,9 @@ function RVMRoomPicker:new(typeKey, vehicle, roomW, roomH)
     o.borderColor     = T.border
     o.moveWithMouse   = true
 
-    o.typeKey           = typeKey
+    o.typeKeys          = typeKeys
     o.freeRooms         = {}
     o.vehicle           = vehicle
-    o.roomW             = roomW
-    o.roomH             = roomH
     o.loading           = true
     o.selectedRoomIndex = nil
     o.filterRegion      = getText("IGUI_RVM_Region_All")
@@ -155,24 +169,19 @@ function RVMRoomPicker:new(typeKey, vehicle, roomW, roomH)
 end
 
 -- Called when the server responds with fresh free-room data.
-function RVMRoomPicker:setFreeRooms(rooms, roomW, roomH)
+-- rooms: array of { index, x, y, z, typeKey, roomW, roomH }
+function RVMRoomPicker:setFreeRooms(rooms)
     self.freeRooms         = rooms
-    self.roomW             = roomW or self.roomW
-    self.roomH             = roomH or self.roomH
     self.loading           = false
     self.selectedRoomIndex = nil
     self.scrollY           = 0
     self:updateConfirm()
-    -- Rebuild region dropdown options with fresh data.
     local allLabel = getText("IGUI_RVM_Region_All")
     self.comboRegion.options = { allLabel }
     local seen = {}
     for _, room in ipairs(rooms) do
         local r = getRoomRegion(room.x)
-        if not seen[r] then
-            seen[r] = true
-            table.insert(self.comboRegion.options, r)
-        end
+        if not seen[r] then seen[r] = true; table.insert(self.comboRegion.options, r) end
     end
     self.comboRegion.selected = 1
     self.filterRegion = allLabel
@@ -280,7 +289,9 @@ function RVMRoomPicker:onConfirm()
     if not self.selectedRoomIndex then return end
     local room
     for _, r in ipairs(self.freeRooms) do
-        if r.index == self.selectedRoomIndex then room = r; break end
+        if r.index == self.selectedRoomIndex and r.typeKey == self.selectedTypeKey then
+            room = r; break
+        end
     end
     if not room then return end
 
@@ -290,9 +301,7 @@ function RVMRoomPicker:onConfirm()
         self.vehicle:getModData().projectRV_uniqueId = uid
     end
 
-    if self.typeKey then
-        sendAssociate(tostring(uid), self.typeKey, self.vehicle, room)
-    end
+    sendAssociate(tostring(uid), room.typeKey, self.vehicle, room)
     self:onClose()
 end
 
@@ -302,13 +311,9 @@ function RVMRoomPicker:render()
     local x = RP_PAD
     local y = RP_PAD
 
-    local sizeStr = (self.roomW and self.roomH)
-        and ("  [" .. self.roomW .. "x" .. self.roomH .. "]")
-        or  ""
-
     if self.loading then
-        self:drawText(
-            getText("IGUI_RVM_Picker_Title") .. " - " .. (self.typeKey or "") .. sizeStr,
+        local typeLabel = (self.typeKeys and #self.typeKeys == 1) and self.typeKeys[1] or "multi"
+        self:drawText(getText("IGUI_RVM_Picker_Title") .. " - " .. typeLabel,
             x, y, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
         local midY = math.floor(self.height / 2) - 8
         self:drawText(getText("IGUI_RVM_Loading"),
@@ -318,36 +323,41 @@ function RVMRoomPicker:render()
 
     local filtered = self:getFiltered()
 
-    -- Detect search text change → deselect + reset scroll
     local curSearch = tostring((self.searchEntry and self.searchEntry:getText()) or "")
     if curSearch ~= self._lastSearch then
         self._lastSearch       = curSearch
         self.selectedRoomIndex = nil
+        self.selectedTypeKey   = nil
         self.scrollY           = 0
         self:updateConfirm()
     end
 
-    local countStr = (#filtered == #self.freeRooms)
+    local typeLabel = (self.typeKeys and #self.typeKeys == 1) and self.typeKeys[1] or "multi"
+    local countStr  = (#filtered == #self.freeRooms)
         and ("(" .. #self.freeRooms .. " free)")
         or  ("(" .. #filtered .. " / " .. #self.freeRooms .. " free)")
-    self:drawText(
-        getText("IGUI_RVM_Picker_Title") .. " - " .. (self.typeKey or "") .. sizeStr .. "  " .. countStr,
+    self:drawText(getText("IGUI_RVM_Picker_Title") .. " - " .. typeLabel .. "  " .. countStr,
         x, y, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
     y = y + RP_HDR
 
-    -- Filter row background (child widgets draw on top)
     self:drawRect(x, y, self.width - RP_PAD * 2, RP_FILTER_H, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
     y = y + RP_FILTER_H
 
-    -- Column headers
+    -- Column positions
+    local C_NUM    = x + 2
+    local C_TYPE   = x + 32   -- typeKey [WxH]
+    local C_REGION = x + 130
+    local C_X      = x + 210
+    local C_Y      = x + 280
+
     self:drawRect(x, y, self.width - RP_PAD * 2, RP_HDR, 1, T.hdrBg.r, T.hdrBg.g, T.hdrBg.b)
     self:drawRect(x, y + RP_HDR - 1, self.width - RP_PAD * 2, 1, 1, T.divider.r, T.divider.g, T.divider.b)
     self:drawRect(x, y, 4, RP_HDR, 1, T.accent.r, T.accent.g, T.accent.b)
-    self:drawText(getText("IGUI_RVM_Picker_Col_Num"),    x + 2,   y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
-    self:drawText(getText("IGUI_RVM_Picker_Col_Region"), x + 38,  y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
-    self:drawText("X",                                   x + 118, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
-    self:drawText("Y",                                   x + 198, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
-    self:drawText("Z",                                   x + 278, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText(getText("IGUI_RVM_Picker_Col_Num"),    C_NUM,    y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText(getText("IGUI_RVM_Picker_Col_Type"),   C_TYPE,   y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText(getText("IGUI_RVM_Picker_Col_Region"), C_REGION, y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText("X",                                   C_X,      y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
+    self:drawText("Y",                                   C_Y,      y + 2, T.text.r, T.text.g, T.text.b, 1, UIFont.Small)
     y = y + RP_HDR
 
     self.listY = y
@@ -359,17 +369,18 @@ function RVMRoomPicker:render()
     local rowY = y - self.scrollY
     for idx, room in ipairs(filtered) do
         if rowY + RP_ROW > y and rowY < y + self.listH then
-            local selected = (room.index == self.selectedRoomIndex)
+            local selected = (room.index == self.selectedRoomIndex and room.typeKey == self.selectedTypeKey)
             local bg = selected and T.rowSel or (idx % 2 == 0 and T.rowA or T.rowB)
             self:drawRect(x, rowY, self.width - RP_PAD * 2, RP_ROW, 1, bg.r, bg.g, bg.b)
-            -- row divider
             self:drawRect(x, rowY + RP_ROW - 1, self.width - RP_PAD * 2, 1, 0.5, T.divider.r, T.divider.g, T.divider.b)
-            local region = getRoomRegion(room.x)
-            self:drawText(tostring(room.index), x + 2,   rowY + 2, T.muted.r, T.muted.g, T.muted.b, 1, UIFont.Small)
-            self:drawText(region,               x + 38,  rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
-            self:drawText(tostring(room.x),     x + 118, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
-            self:drawText(tostring(room.y),     x + 198, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
-            self:drawText(tostring(room.z),     x + 278, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            local typeStr = room.typeKey or "?"
+            if room.roomW and room.roomH then typeStr = typeStr .. " " .. room.roomW .. "x" .. room.roomH end
+            local region  = getRoomRegion(room.x)
+            self:drawText(tostring(room.index), C_NUM,    rowY + 2, T.muted.r, T.muted.g, T.muted.b, 1, UIFont.Small)
+            self:drawText(typeStr,              C_TYPE,   rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(region,               C_REGION, rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(tostring(room.x),     C_X,      rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
+            self:drawText(tostring(room.y),     C_Y,      rowY + 2, T.text.r,  T.text.g,  T.text.b,  1, UIFont.Small)
         end
         rowY = rowY + RP_ROW
     end
@@ -393,8 +404,14 @@ function RVMRoomPicker:onMouseDown(x, y)
     local idx      = math.floor(relY / RP_ROW) + 1
     local filtered = self:getFiltered()
     if idx >= 1 and idx <= #filtered then
-        local roomIndex = filtered[idx].index
-        self.selectedRoomIndex = (self.selectedRoomIndex == roomIndex) and nil or roomIndex
+        local room = filtered[idx]
+        if self.selectedRoomIndex == room.index and self.selectedTypeKey == room.typeKey then
+            self.selectedRoomIndex = nil
+            self.selectedTypeKey   = nil
+        else
+            self.selectedRoomIndex = room.index
+            self.selectedTypeKey   = room.typeKey
+        end
         self:updateConfirm()
     end
 end
@@ -408,9 +425,12 @@ function RVMRoomPicker:onMouseWheel(del)
     return true
 end
 
--- Populated at right-click time so the picker can open without a loading state.
--- [typeKey] = { count = N, rooms = {...} }
-local freeRoomCache = {}
+local function freeRoomCacheKey(typeKeys)
+    local sorted = {}
+    for _, k in ipairs(typeKeys) do table.insert(sorted, k) end
+    table.sort(sorted)
+    return table.concat(sorted, "|")
+end
 
 -- ============================================================
 -- Context Menu injection
@@ -427,66 +447,64 @@ function ISVehicleMenu.FillMenuOutsideVehicle(player, context, vehicle, test)
     local playerObj = getSpecificPlayer(player)
     if not playerObj or not isAdmin(playerObj) then return end
 
-    local typeKey = getRVTypeKey(vehicle)
-    if not typeKey then return end
+    local typeKeys = getRVTypeKeys(vehicle)
+    if #typeKeys == 0 then return end
 
-    local uid          = vehicle:getModData().projectRV_uniqueId
-    local assignedRvId = uid and getAssignedRvId(vehicle, typeKey)
+    local assignedRvId, assignedTypeKey = getAssignedRvId(vehicle)
 
     if assignedRvId then
         -- Vehicle already has a room — offer Dissociate
-        local fn = function()
-            sendDissociate(tostring(vehicle:getModData().projectRV_uniqueId))
-        end
+        local fn = function() sendDissociate(assignedRvId) end
         context:addOption(getText("IGUI_RVM_Ctx_Dissociate"), fn, fn)
     else
-        -- Vehicle has no room — pre-fetch free rooms immediately at right-click time
-        -- so the picker can open without a loading state when the admin clicks it.
-        local roomW, roomH = getRoomSize(typeKey)
-        local sizeTag      = (roomW and roomH) and (" [" .. roomW .. "x" .. roomH .. "]") or ""
-        local cached       = freeRoomCache[typeKey]
+        -- Build a label: if only one type, show type+size; if multiple, just show types joined
+        local labelTag
+        if #typeKeys == 1 then
+            local roomW, roomH = getRoomSize(typeKeys[1])
+            labelTag = typeKeys[1] .. ((roomW and roomH) and (" [" .. roomW .. "x" .. roomH .. "]") or "")
+        else
+            labelTag = table.concat(typeKeys, "/")
+        end
 
-        sendClientCommand(getPlayer(), RVM.MODULE, "getFreeRooms", { typeKey = typeKey })
+        -- Pre-fetch free rooms for all matching types
+        local cacheKey = freeRoomCacheKey(typeKeys)
+        sendClientCommand(getPlayer(), RVM.MODULE, "getFreeRooms", { typeKeys = typeKeys })
+        local cached = freeRoomCache[cacheKey]
 
-        -- If cache says 0 free rooms, show a disabled option (may be stale; picker will verify).
         if cached and cached.count == 0 then
-            local opt = context:addOption(getText("IGUI_RVM_Ctx_NoFreeRooms", typeKey, sizeTag), nil, nil)
+            local opt = context:addOption(getText("IGUI_RVM_Ctx_NoFreeRooms", labelTag, ""), nil, nil)
             opt.notAvailable = true
             return
         end
 
-        local addOpt = context:addOption(
-            getText("IGUI_RVM_Ctx_Associate", typeKey, sizeTag), nil, nil)
-
+        local addOpt = context:addOption(getText("IGUI_RVM_Ctx_Associate", labelTag, ""), nil, nil)
         local subMenu = ISContextMenu:getNew(context)
         context:addSubMenu(addOpt, subMenu)
 
-        -- Random assignment
+        -- Random assignment: randomly pick a matching type, then assign
         local fnRandom = function()
             local u = vehicle:getModData().projectRV_uniqueId
             if not u then
                 u = ZombRand(1, 99999999)
                 vehicle:getModData().projectRV_uniqueId = u
             end
-            sendAssociate(tostring(u), typeKey, vehicle)
+            local tk = typeKeys[ZombRand(#typeKeys) + 1]
+            sendAssociate(tostring(u), tk, vehicle)
         end
         subMenu:addOption(getText("IGUI_RVM_Ctx_RandomRoom"), fnRandom, fnRandom)
 
-        -- Room picker — uses pre-fetched cache if already available, loading state as fallback.
+        -- Room picker — re-lookup cache at open time so data that arrived after
+        -- the right-click is available immediately rather than stuck on loading.
         local fnPicker = function()
             if RVMRoomPicker.instance then
                 RVMRoomPicker.instance:removeFromUIManager()
             end
-            local picker = RVMRoomPicker:new(typeKey, vehicle, roomW, roomH)
+            local picker = RVMRoomPicker:new(typeKeys, vehicle)
             picker:initialise()
             picker:addToUIManager()
             RVMRoomPicker.instance = picker
-            local hit = freeRoomCache[typeKey]
-            if hit then
-                picker:setFreeRooms(hit.rooms, roomW, roomH)
-            end
-            -- If cache missed (response not yet arrived), the picker stays in loading
-            -- state and freeRoomsResponse will call setFreeRooms when it arrives.
+            local hit = freeRoomCache[freeRoomCacheKey(typeKeys)]
+            if hit then picker:setFreeRooms(hit.rooms) end
         end
         local countLabel = cached and tostring(cached.count) or "?"
         subMenu:addOption(getText("IGUI_RVM_Ctx_ChooseRoom", countLabel), fnPicker, fnPicker)
@@ -510,16 +528,69 @@ local function onServerCommand(module, command, args)
         return
     end
 
-    if command == "freeRoomsResponse" then
+    if command == "adminSync" then
+        -- Server sends this on connect and after any script-override change.
+        -- Keeps VehicleTypes scripts and assignment state in sync.
+        local scriptsState = args and args.scriptsState
+        if scriptsState then
+            local okRV, RV = pcall(require, "RVVehicleTypes")
+            if okRV and RV and RV.VehicleTypes then
+                for tk, scripts in pairs(scriptsState) do
+                    if RV.VehicleTypes[tk] then
+                        RV.VehicleTypes[tk].scripts = scripts
+                    end
+                end
+            end
+        end
+        local assignments = args and args.assignments
+        if assignments then
+            assignmentCache = {}
+            for rvId, info in pairs(assignments) do
+                if info and info.typeKey then
+                    assignmentCache[tostring(rvId)] = info
+                end
+            end
+        end
+        freeRoomCache = {}
+        return
+    end
+
+    if command == "vehicleAssigned" then
+        local rvId    = args and args.rvVehicleUniqueId
         local typeKey = args and args.typeKey
-        local rooms   = (args and args.rooms) or {}
-        if typeKey then
-            freeRoomCache[typeKey] = { count = #rooms, rooms = rooms }
+        local room    = args and args.room
+        if rvId and typeKey and room then
+            local strId = tostring(rvId)
+            local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+            local dataKey = (typeKey == "normal") and "AssignedRooms" or ("AssignedRooms" .. typeKey)
+            base[dataKey] = base[dataKey] or {}
+            local numId = tonumber(rvId)
+            base[dataKey][strId] = { x = room.x, y = room.y, z = room.z }
+            if numId then base[dataKey][numId] = base[dataKey][strId] end
+            assignmentCache[strId] = { typeKey = typeKey, room = room }
+            freeRoomCache = {}
+        end
+        return
+    end
+
+    if command == "vehicleDissociated" then
+        local rvId = args and args.rvVehicleUniqueId
+        if rvId then
+            assignmentCache[tostring(rvId)] = nil
+            freeRoomCache = {}
+        end
+        return
+    end
+
+    if command == "freeRoomsResponse" then
+        local typeKeys = args and args.typeKeys
+        local rooms    = (args and args.rooms) or {}
+        if typeKeys then
+            local ck = freeRoomCacheKey(typeKeys)
+            freeRoomCache[ck] = { count = #rooms, rooms = rooms }
         end
         local picker = RVMRoomPicker.instance
-        if picker and picker.typeKey == typeKey then
-            picker:setFreeRooms(rooms, args.roomW, args.roomH)
-        end
+        if picker then picker:setFreeRooms(rooms) end
         return
     end
 
@@ -529,34 +600,52 @@ local function onServerCommand(module, command, args)
             local typeKey = args.typeKey
             local room    = args.room
             if rvId and typeKey and room then
+                local strId   = tostring(rvId)
                 local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
                 local dataKey = (typeKey == "normal") and "AssignedRooms"
                                                       or  ("AssignedRooms" .. typeKey)
                 base[dataKey] = base[dataKey] or {}
-                local strId = tostring(rvId)
                 local numId = tonumber(rvId)
                 base[dataKey][strId] = { x = room.x, y = room.y, z = room.z }
                 if numId then base[dataKey][numId] = base[dataKey][strId] end
-                freeRoomCache[typeKey] = nil
+                assignmentCache[strId] = { typeKey = typeKey, room = room }
+                freeRoomCache = {}
             end
         elseif args and not args.ok then
+            -- If the server knows the vehicle is already assigned, sync so the
+            -- context menu shows Dissociate on the next right-click.
+            if args.existingTypeKey and args.existingRoom then
+                local strId   = tostring(args.rvVehicleUniqueId)
+                local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+                local dataKey = (args.existingTypeKey == "normal") and "AssignedRooms"
+                                or ("AssignedRooms" .. args.existingTypeKey)
+                base[dataKey] = base[dataKey] or {}
+                local numId = tonumber(args.rvVehicleUniqueId)
+                base[dataKey][strId] = { x = args.existingRoom.x, y = args.existingRoom.y, z = args.existingRoom.z }
+                if numId then base[dataKey][numId] = base[dataKey][strId] end
+                assignmentCache[strId] = { typeKey = args.existingTypeKey, room = args.existingRoom }
+                freeRoomCache = {}
+            end
             rvm_notify(getText("IGUI_RVM_Err_AssocFailed", args.err or "unknown error"))
         end
     elseif command == "dissociateResult" then
         if args and args.ok then
             local rvId    = args.rvVehicleUniqueId
             local typeKey = args.typeKey
-            if rvId and typeKey then
-                local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
-                local dataKey = (typeKey == "normal") and "AssignedRooms"
-                                                      or  ("AssignedRooms" .. typeKey)
-                if base[dataKey] then
-                    local strId = tostring(rvId)
-                    local numId = tonumber(rvId)
-                    base[dataKey][strId] = nil
-                    if numId then base[dataKey][numId] = nil end
+            if rvId then
+                local strId = tostring(rvId)
+                if typeKey then
+                    local base    = ModData.getOrCreate(RVM.BASE_MOD_DATA_KEY)
+                    local dataKey = (typeKey == "normal") and "AssignedRooms"
+                                                          or  ("AssignedRooms" .. typeKey)
+                    if base[dataKey] then
+                        local numId = tonumber(rvId)
+                        base[dataKey][strId] = nil
+                        if numId then base[dataKey][numId] = nil end
+                    end
                 end
-                freeRoomCache[typeKey] = nil
+                assignmentCache[strId] = nil
+                freeRoomCache = {}
             end
         elseif args and not args.ok then
             rvm_notify(getText("IGUI_RVM_Err_DissocFailed", args.err or "unknown error"))
@@ -565,3 +654,15 @@ local function onServerCommand(module, command, args)
 end
 
 Events.OnServerCommand.Add(onServerCommand)
+
+-- Request the initial sync from the server once the player object is available.
+-- Runs every tick until an admin player is ready, then fires once and removes itself.
+local function requestInitialSync()
+    local p = getSpecificPlayer(0)
+    if not p then return end
+    Events.OnTick.Remove(requestInitialSync)
+    if isAdmin(p) then
+        sendClientCommand(p, RVM.MODULE, "requestAdminSync", {})
+    end
+end
+Events.OnTick.Add(requestInitialSync)
