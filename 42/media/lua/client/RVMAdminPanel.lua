@@ -413,13 +413,12 @@ end
 -- ============================================================
 function RVManagerPanel:getUnallocatedScripts()
     if not self.data or not self.data.scriptOverrides then return {} end
-    local ok, RV = pcall(require, "RVVehicleTypes")
-    if not ok or not RV or not RV.VehicleTypes then return {} end
 
     local inSomeType = {}
-    for _, typeDef in pairs(RV.VehicleTypes) do
-        if typeDef.scripts then
-            for _, s in ipairs(typeDef.scripts) do inSomeType[s] = true end
+    local ss = self.data.scriptsState
+    if ss then
+        for _, scripts in pairs(ss) do
+            for _, s in ipairs(scripts) do inSomeType[s] = true end
         end
     end
 
@@ -596,15 +595,13 @@ end
 -- Add-entry dropdown helpers
 -- ============================================================
 function RVManagerPanel:getAddDropdownOptions(searchLower)
-    -- Build script → current RV type lookup from in-memory VehicleTypes
+    -- Build script → current RV type lookup from server-provided scriptsState
     local scriptToType = {}
-    local okRV, RV = pcall(require, "RVVehicleTypes")
-    if okRV and RV and RV.VehicleTypes then
-        for typeKey, typeDef in pairs(RV.VehicleTypes) do
-            if typeDef.scripts then
-                for _, s in ipairs(typeDef.scripts) do
-                    scriptToType[s] = typeKey
-                end
+    local ss = self.data and self.data.scriptsState
+    if ss then
+        for typeKey, scripts in pairs(ss) do
+            for _, s in ipairs(scripts) do
+                scriptToType[s] = typeKey
             end
         end
     end
@@ -921,11 +918,9 @@ function RVManagerPanel:renderVehicleTypePanel(x, startY, w, totalH)
     end
     local scriptCount = 0
     if self.selectedSummaryType then
-        local ok, RV = pcall(require, "RVVehicleTypes")
-        if ok and RV and RV.VehicleTypes then
-            local td = RV.VehicleTypes[self.selectedSummaryType]
-            if td and td.scripts then scriptCount = #td.scripts end
-        end
+        local ss = self.data and self.data.scriptsState
+        local typeScripts = ss and ss[self.selectedSummaryType]
+        if typeScripts then scriptCount = #typeScripts end
     end
     local countStr = tostring(scriptCount) .. " " .. getText("IGUI_RVM_VehicleCount")
     local cw = tm:MeasureStringX(UIFont.Small, countStr)
@@ -953,23 +948,21 @@ function RVManagerPanel:renderVehicleTypePanel(x, startY, w, totalH)
     if not self.selectedSummaryType then
         self:drawRect(x, y, w, listH, 0.20, T.rowA.r, T.rowA.g, T.rowA.b)
     else
-        local ok, RV = pcall(require, "RVVehicleTypes")
         local scripts = {}
-        if ok and RV and RV.VehicleTypes then
-            local td = RV.VehicleTypes[self.selectedSummaryType]
-            if td and td.scripts then
-                local srch = ""
-                if self.vehicleSearchEntry then
-                    local raw = self.vehicleSearchEntry:getText()
-                    if type(raw) == "string" then srch = raw:lower():match("^%s*(.-)%s*$") or "" end
-                end
-                if srch ~= (self.vehicleListLastSearch or "") then
-                    self.vehicleListLastSearch = srch
-                    self.vehicleListScrollY    = 0
-                end
-                for _, s in ipairs(td.scripts) do
-                    if srch == "" or s:lower():find(srch, 1, true) then table.insert(scripts, s) end
-                end
+        local ss = self.data and self.data.scriptsState
+        local typeScripts = ss and ss[self.selectedSummaryType]
+        if typeScripts then
+            local srch = ""
+            if self.vehicleSearchEntry then
+                local raw = self.vehicleSearchEntry:getText()
+                if type(raw) == "string" then srch = raw:lower():match("^%s*(.-)%s*$") or "" end
+            end
+            if srch ~= (self.vehicleListLastSearch or "") then
+                self.vehicleListLastSearch = srch
+                self.vehicleListScrollY    = 0
+            end
+            for _, s in ipairs(typeScripts) do
+                if srch == "" or s:lower():find(srch, 1, true) then table.insert(scripts, s) end
             end
         end
 
@@ -1082,14 +1075,12 @@ function RVManagerPanel:getCrossSearchResults(search)
 
     -- Build script → RV types map
     local scriptTypes = {}
-    local ok, RV = pcall(require, "RVVehicleTypes")
-    if ok and RV and RV.VehicleTypes then
-        for tk, td in pairs(RV.VehicleTypes) do
-            if td.scripts then
-                for _, s in ipairs(td.scripts) do
-                    if not scriptTypes[s] then scriptTypes[s] = {} end
-                    table.insert(scriptTypes[s], tk)
-                end
+    local ss = self.data and self.data.scriptsState
+    if ss then
+        for tk, scripts in pairs(ss) do
+            for _, s in ipairs(scripts) do
+                if not scriptTypes[s] then scriptTypes[s] = {} end
+                table.insert(scriptTypes[s], tk)
             end
         end
     end
@@ -1421,10 +1412,9 @@ function RVManagerPanel:renderVehicleList(x, y, w, totalH)
         return
     end
 
-    local ok, RV = pcall(require, "RVVehicleTypes")
-    if not ok or not RV or not RV.VehicleTypes then return end
-    local typeDef = RV.VehicleTypes[self.selectedSummaryType]
-    if not typeDef or not typeDef.scripts then return end
+    local ss = self.data and self.data.scriptsState
+    local typeScripts = ss and ss[self.selectedSummaryType]
+    if not typeScripts then return end
 
     local search = ""
     if self.vehicleSearchEntry then
@@ -1437,7 +1427,7 @@ function RVManagerPanel:renderVehicleList(x, y, w, totalH)
     end
 
     local filtered = {}
-    for _, script in ipairs(typeDef.scripts) do
+    for _, script in ipairs(typeScripts) do
         if search == "" or script:lower():find(search, 1, true) then
             table.insert(filtered, script)
         end
@@ -1745,22 +1735,20 @@ function RVManagerPanel:onMouseDown(x, y)
         if y >= self.vehicleListRegionY and y < self.vehicleListRegionY + self.vehicleListRegionH
             and x >= self.vehicleListX and x < self.vehicleListX + self.vehicleListW
             and self.selectedSummaryType then
-            local ok, RV = pcall(require, "RVVehicleTypes")
-            if ok and RV and RV.VehicleTypes then
-                local td = RV.VehicleTypes[self.selectedSummaryType]
-                if td and td.scripts then
-                    local srch = self.vehicleListLastSearch or ""
-                    local filtered = {}
-                    for _, s in ipairs(td.scripts) do
-                        if srch == "" or s:lower():find(srch, 1, true) then table.insert(filtered, s) end
-                    end
-                    local relY   = y - self.vehicleListRegionY + self.vehicleListScrollY
-                    local rowIdx = math.floor(relY / ROW_H) + 1
-                    if rowIdx >= 1 and rowIdx <= #filtered then
-                        local script = filtered[rowIdx]
-                        self.vehicleListSelected = (self.vehicleListSelected == script) and nil or script
-                        self:updateVehicleListButtons()
-                    end
+            local ss = self.data and self.data.scriptsState
+            local typeScripts = ss and ss[self.selectedSummaryType]
+            if typeScripts then
+                local srch = self.vehicleListLastSearch or ""
+                local filtered = {}
+                for _, s in ipairs(typeScripts) do
+                    if srch == "" or s:lower():find(srch, 1, true) then table.insert(filtered, s) end
+                end
+                local relY   = y - self.vehicleListRegionY + self.vehicleListScrollY
+                local rowIdx = math.floor(relY / ROW_H) + 1
+                if rowIdx >= 1 and rowIdx <= #filtered then
+                    local script = filtered[rowIdx]
+                    self.vehicleListSelected = (self.vehicleListSelected == script) and nil or script
+                    self:updateVehicleListButtons()
                 end
             end
             return
@@ -1820,18 +1808,16 @@ function RVManagerPanel:onMouseWheel(del)
         -- Vehicle list scroll (right panel)
         if my >= self.vehicleListRegionY and my < self.vehicleListRegionY + self.vehicleListRegionH
             and mx >= self.vehicleListX and self.selectedSummaryType then
-            local ok, RV = pcall(require, "RVVehicleTypes")
-            if ok and RV and RV.VehicleTypes then
-                local td = RV.VehicleTypes[self.selectedSummaryType]
-                if td and td.scripts then
-                    local srch  = self.vehicleListLastSearch or ""
-                    local count = 0
-                    for _, s in ipairs(td.scripts) do
-                        if srch == "" or s:lower():find(srch, 1, true) then count = count + 1 end
-                    end
-                    local maxScroll = math.max(0, count * ROW_H - self.vehicleListRegionH)
-                    self.vehicleListScrollY = math.max(0, math.min(maxScroll, self.vehicleListScrollY + step))
+            local ss = self.data and self.data.scriptsState
+            local typeScripts = ss and ss[self.selectedSummaryType]
+            if typeScripts then
+                local srch  = self.vehicleListLastSearch or ""
+                local count = 0
+                for _, s in ipairs(typeScripts) do
+                    if srch == "" or s:lower():find(srch, 1, true) then count = count + 1 end
                 end
+                local maxScroll = math.max(0, count * ROW_H - self.vehicleListRegionH)
+                self.vehicleListScrollY = math.max(0, math.min(maxScroll, self.vehicleListScrollY + step))
             end
 
         -- Cross-search list scroll
@@ -2063,8 +2049,8 @@ local function onServerCommand(module, command, args)
     elseif command == "idleCheckResult" then
         panel:requestData()
     elseif command == "scriptOverrideResult" then
-        -- adminSync already updated RV.VehicleTypes globally; no full refresh needed.
-        -- Just update the allVehicleScripts badge data if it changed.
+        panel._pendingReceiveOpts = { preserveTypeSelection = true }
+        panel:requestData()
     end
 end
 
