@@ -32,7 +32,8 @@ Open via the [b]RV Interior Manager[/b] button in the Admin Panel (admin/moderat
 [*]One row per interior type with room dimensions (e.g. [i]8x4[/i]) and slot counts (total / available / occupied)
 [*]Select a type to edit its compatible vehicle list on the right
 [*]Search field to filter types by name
-[*][b]Restore Default[/b] button resets all type overrides to the original mod values; changes persist across world wipes
+[*][b]Restore Default[/b] button resets all type overrides to the original mod values
+[*]All changes are saved to [b]~/Zomboid/Lua/vehicles_type_changes.lua[/b] on the server — this file is outside the world save and [b]persists across world wipes[/b]
 [/list]
 
 [b]Room Types tab — compatible vehicles (right panel)[/b]
@@ -101,7 +102,7 @@ Automatically dissociates rooms that have not been entered for the configured nu
 [list]
 [*]Uses [b]Last Enter[/b] date as the reference; falls back to [b]Linked At[/b] if the vehicle was never entered
 [*]Runs once on world load and every ~60 minutes during the session
-[*]Every dissociation is logged to [b]~/Zomboid/Logs/RVM_IdleCleanup.log[/b] with full details
+[*]Every dissociation (idle or manual) is logged to [b]~/Zomboid/Lua/RVM/idle_YYYY-MM-DD_HH-MM-SS.txt[/b] — one file per server session, with full details (vehicle ID, name, type, room and vehicle positions, dates)
 [/list]
 
 [hr][/hr]

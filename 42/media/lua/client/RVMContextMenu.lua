@@ -567,12 +567,18 @@ local function onServerCommand(module, command, args)
             for tk, scripts in pairs(scriptsState) do
                 clientScriptsState[tk] = scripts
             end
-            -- Patch RV.VehicleTypes directly via the global (same reference the base mod uses),
-            -- so the base mod's own radial-menu check also sees the updated scripts list.
-            if RV and RV.VehicleTypes then
+            -- Patch via global RV and via require so the base mod's radial-menu
+            -- check sees the updated scripts regardless of which reference it holds.
+            local targets = {}
+            if RV and RV.VehicleTypes then targets[#targets+1] = RV end
+            local ok, RVreq = pcall(require, "RVVehicleTypes")
+            if ok and RVreq and RVreq.VehicleTypes and RVreq ~= RV then
+                targets[#targets+1] = RVreq
+            end
+            for _, rv in ipairs(targets) do
                 for tk, scripts in pairs(scriptsState) do
-                    if RV.VehicleTypes[tk] then
-                        RV.VehicleTypes[tk].scripts = scripts
+                    if rv.VehicleTypes[tk] then
+                        rv.VehicleTypes[tk].scripts = scripts
                     end
                 end
             end
