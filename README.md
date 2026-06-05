@@ -170,6 +170,16 @@ This mod may **not** be included in modpacks, collections distributed as a singl
 
 ---
 
+## Copyright
+
+**Copyright 2026 Leandro Ferreira. All rights reserved.**
+
+This item is not authorized for posting on Steam, except under the Steam account named **leozimmelo** (Steam Workshop ID [3704055215](https://steamcommunity.com/sharedfiles/filedetails/?id=3704055215)).
+
+This mod may not be reuploaded, mirrored, or included in modpacks or collections distributed as a single download without the express written permission of the original creator.
+
+---
+
 ## CI/CD — Steam Workshop Publishing
 
 Pushes and merged PRs to `main` automatically publish the mod to the Workshop via GitHub Actions ([`.github/workflows/steam-publish.yml`](.github/workflows/steam-publish.yml)).
