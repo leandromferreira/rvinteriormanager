@@ -13,8 +13,6 @@ A companion admin panel for [b]PROJECT RV Interior[/b] (and its expansion mods).
 
 [i]Optional but recognised:[/i]
 [list]
-[*]RV Interior Update 1 (rvupdate)
-[*]RV Interior Update 2 (rvupdate2)
 [*][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3618427553]RV Interior Expansion [B42][/url]
 [*][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3622163276]RV Interior Expansion Part 2 [B42][/url]
 [*][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3614959302]RV Military Addon [B42][/url]
