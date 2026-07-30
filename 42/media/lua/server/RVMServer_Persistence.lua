@@ -6,8 +6,9 @@ if not isServer() then return end
 require("RVMShared")
 
 -- File paths (defined in RVMServer.lua so _Admin can reference them too).
-local STANDARD_FILE = RVMServer.STANDARD_FILE
-local CHANGES_FILE  = RVMServer.CHANGES_FILE
+local STANDARD_FILE    = RVMServer.STANDARD_FILE
+local CHANGES_FILE     = RVMServer.CHANGES_FILE
+local CHANGES_FILE_OLD = RVMServer.CHANGES_FILE_OLD
 
 local function saveStandardTypes()
     local ok, RV = pcall(require, "RVVehicleTypes")
@@ -83,6 +84,14 @@ RVMServer.saveChangesFile = saveChangesFile
 
 local function loadChangesFile()
     local reader = getFileReader(CHANGES_FILE, false)
+    local usedOldFile = false
+    if not reader and CHANGES_FILE_OLD then
+        -- Fall back to the pre-42.20 filename (getFileReader has no extension
+        -- restriction, so this legacy file is still readable even though it
+        -- can no longer be written — see RVMServer.lua comment).
+        reader = getFileReader(CHANGES_FILE_OLD, false)
+        usedOldFile = reader ~= nil
+    end
     if not reader then return nil end
     local result = {}
     local line = reader:readLine()
@@ -102,6 +111,10 @@ local function loadChangesFile()
         line = reader:readLine()
     end
     pcall(function() reader:close() end)
+    if usedOldFile then
+        print("[RVM] loadChangesFile: migrated overrides from legacy " .. CHANGES_FILE_OLD .. " to " .. CHANGES_FILE)
+        saveChangesFile(result)
+    end
     return result
 end
 RVMServer.loadChangesFile = loadChangesFile

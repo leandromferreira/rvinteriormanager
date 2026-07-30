@@ -32,11 +32,17 @@ RVMServer.posCache = RVMServer.posCache or {}   -- [rvId] = { x, y, z }   last p
 RVMServer.dirtySet = RVMServer.dirtySet or {}   -- [rvId] = true            needs flush
 
 -- File-path constants (shared with _Persistence and _Admin).
--- standard_vehiclestype.lua  — clean defaults written once on each server start
+-- standard_vehiclestype.txt  — clean defaults written once on each server start
 --                              (before any admin overrides are applied)
--- vehicles_type_changes.lua  — admin overrides; survives world wipes
-RVMServer.STANDARD_FILE = "RVM/standard_vehiclestype.lua"
-RVMServer.CHANGES_FILE  = "vehicles_type_changes.lua"
+-- vehicles_type_changes.txt  — admin overrides; survives world wipes
+-- B42.20 added an extension allowlist to getFileWriter (ini/cfg/txt/log only);
+-- both files used to be .lua and getFileWriter would silently return nil for
+-- them. CHANGES_FILE_OLD is the pre-42.20 name, kept for one-time migration
+-- of existing overrides in RVMServer_Persistence.loadChangesFile — it is only
+-- ever read (getFileReader has no such restriction), never written.
+RVMServer.STANDARD_FILE     = "RVM/standard_vehiclestype.txt"
+RVMServer.CHANGES_FILE      = "vehicles_type_changes.txt"
+RVMServer.CHANGES_FILE_OLD  = "vehicles_type_changes.lua"
 
 local tickCount = 0
 local idleTickCount = 0
