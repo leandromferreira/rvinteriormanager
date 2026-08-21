@@ -23,7 +23,23 @@
       "Read(//home/leandro/.steam/debian-installation/steamapps/common/ProjectZomboid/projectzomboid/media/lua/client/ISUI/**)",
       "Read(//home/leandro/.steam/steam/steamapps/common/ProjectZomboid/media/**)",
       "Read(//home/leandro/**)",
-      "Read(//opt/pzserver/steamapps/workshop/content/108600/**)"
+      "Read(//opt/pzserver/steamapps/workshop/content/108600/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/**)",
+      "Bash(xargs ls -la)",
+      "Read(//home/leandro/.steam/steam/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/shared/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/shared/**)",
+      "Bash(grep -rn \"VehicleTypes\\\\|scripts\\\\|table.insert\" \"/home/leandro/.steam/steam/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/client/RVClientSP.lua\" | head -80)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/client/**)",
+      "Bash(grep -A5 -B2 \"3543229299\" \"/home/leandro/.steam/steam/steamapps/workshop/appworkshop_108600.acf\" 2>&1 | head -40)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/workshop/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/**)",
+      "Bash(awk '/\"3543229299\"/{found=1} found{print; if\\(/}/ && ++c==2\\) exit}' \"/home/leandro/.steam/steam/steamapps/workshop/appworkshop_108600.acf\")",
+      "Bash(grep -n \"3543229299\\\\|WorkshopItemsInstalled\\\\|WorkshopItemDetails\\\\|AppWorkshop\" \"/home/leandro/.steam/steam/steamapps/workshop/appworkshop_108600.acf\")",
+      "Bash(sed -n '1356,1365p' \"/home/leandro/.steam/steam/steamapps/workshop/appworkshop_108600.acf\")",
+      "Read(//home/leandro/.steam/steam/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/server/**)",
+      "Read(//home/leandro/.steam/debian-installation/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/server/**)",
+      "Read(//home/leandro/.steam/steam/steamapps/common/ProjectZomboid/projectzomboid/steamapps/workshop/content/108600/3543229299/mods/modPROJECTRVInterior/42/media/lua/client/**)"
     ]
   }
 }

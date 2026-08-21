@@ -191,7 +191,11 @@ local function buildAdminSync()
     return { scriptsState = scriptsState, assignments = assignments }
 end
 
--- Broadcasts the sync payload to every online admin/moderator.
+-- Broadcasts the sync payload to every online player.
+-- Every client's local VehicleTypes[tk].scripts must match this or the base
+-- mod's own "Enter RV" radial menu (client-side gated) never appears for
+-- vehicles whose interior was added purely via script overrides — not just
+-- admins/moderators need this, every player does.
 local function broadcastAdminSync()
     local okOp, onlinePlayers = pcall(getOnlinePlayers)
     if not okOp or not onlinePlayers then return end
@@ -201,14 +205,11 @@ local function broadcastAdminSync()
     while it:hasNext() do
         local p = it:next()
         if p then
-            local lvl = string.lower(p:getAccessLevel() or "")
-            if lvl == "admin" or lvl == "moderator" then
-                sendServerCommand(p, RVM.MODULE, "adminSync", payload)
-                sent = sent + 1
-            end
+            sendServerCommand(p, RVM.MODULE, "adminSync", payload)
+            sent = sent + 1
         end
     end
-    print("[RVM] broadcastAdminSync: sent to " .. sent .. " admin(s)")
+    print("[RVM] broadcastAdminSync: sent to " .. sent .. " player(s)")
 end
 
 -- ============================================================
@@ -373,8 +374,9 @@ local function onAdminCommand(module, command, player, data)
     if module ~= RVM.MODULE then return end
 
     if command == "requestAdminSync" then
-        local lvl = string.lower(player:getAccessLevel() or "")
-        if lvl ~= "admin" and lvl ~= "moderator" then return end
+        -- Every player needs this (not just admin/moderator): it carries the
+        -- current VehicleTypes[tk].scripts, which the base mod's client-side
+        -- "Enter RV" radial menu depends on to even show up.
         sendServerCommand(player, RVM.MODULE, "adminSync", buildAdminSync())
 
     elseif command == "requestData" then

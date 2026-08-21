@@ -363,13 +363,15 @@ end
 Events.OnServerCommand.Add(onServerCommand)
 
 -- Request the initial sync from the server once the player object is available.
--- Runs every tick until an admin player is ready, then fires once and removes itself.
+-- Runs every tick until the player is ready, then fires once and removes itself.
+-- Every player needs this, not just admins/moderators: it patches this
+-- client's local VehicleTypes[tk].scripts, which the base mod's own
+-- "Enter RV" radial menu depends on to appear at all for vehicles whose
+-- interior was added purely via an admin panel script override.
 local function requestInitialSync()
     local p = getSpecificPlayer(0)
     if not p then return end
     Events.OnTick.Remove(requestInitialSync)
-    if isAdmin(p) then
-        sendClientCommand(p, RVM.MODULE, "requestAdminSync", {})
-    end
+    sendClientCommand(p, RVM.MODULE, "requestAdminSync", {})
 end
 Events.OnTick.Add(requestInitialSync)
