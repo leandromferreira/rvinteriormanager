@@ -2,6 +2,15 @@
 
 [hr][/hr]
 
+[h2]v0.7 — 2026-08-21[/h2]
+
+[h3]Bug Fixes[/h3]
+[list]
+[*][b]Non-admin players couldn't "Enter RV" on vehicles added purely via a script override[/b] — [i]adminSync[/i] (which carries the current [i]VehicleTypes[typeKey].scripts[/i], needed by the base mod's own client-side "Enter RV" radial menu check) was only requested by admin/moderator clients and only broadcast to admin/moderator players by the server. Regular players' clients never received script overrides added through the panel's "Add Vehicle" feature, so the base mod's radial menu never showed the option for those vehicles — even though the server-side scripts list (and thus [i]GetInToRV[/i]) was correct. Every player now requests and receives this sync on connect and whenever an admin changes the script list.
+[/list]
+
+[hr][/hr]
+
 [h2]v0.6 — 2026-05-09[/h2]
 
 [h3]New Features[/h3]
